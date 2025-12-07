@@ -5,8 +5,9 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>工业综合能源系统仿真 (IES Simulation)</title>
-  <script type="module" crossorigin src="./assets/index-CnjwFGIo.js"></script>
-  <link rel="stylesheet" crossorigin href="./assets/index-Ck6jCxaB.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+  <script type="module" crossorigin src="./assets/index-CJk9pFNp.js"></script>
+  <link rel="stylesheet" crossorigin href="./assets/index-Ccn7ipc8.css">
 </head>
 
 <body class="bg-slate-50 text-slate-800 antialiased font-sans">
@@ -19,7 +20,7 @@
       </div>
       <div class="flex items-center gap-4">
         <span class="text-xs text-slate-400">Core: CoolProp WASM</span>
-        <span class="text-xs bg-emerald-600 px-3 py-1 rounded-full font-mono">v3.0 Flue Gas</span>
+        <span class="text-xs bg-rose-600 px-3 py-1 rounded-full font-mono">v5.0 Expert</span>
       </div>
     </div>
   </header>
@@ -32,26 +33,44 @@
         
         <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
           <h2 class="text-sm font-bold text-slate-500 uppercase tracking-wider mb-4 border-b pb-2">
-            🔌 系统拓扑结构 (Topology)
+            🔌 系统架构 (System Architecture)
           </h2>
           
           <div class="space-y-4">
             <div>
-              <label class="block text-sm font-medium text-slate-700 mb-2">选择耦合模式</label>
+              <label class="block text-sm font-medium text-slate-700 mb-2">一级耦合模式</label>
               <select id="select-topology" 
                 class="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-slate-700 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition">
                 <option value="PARALLEL">方案 A: 传统解耦 (环境源 + 锅炉)</option>
                 <option value="COUPLED">方案 B: 余热耦合 (余热源 + 锅炉)</option>
                 <option value="FLUE_GAS">方案 C: 烟气深度回收 (消白+节能)</option>
               </select>
-              
-              <div id="diagram-container" class="mt-4 h-48 w-full bg-slate-50 rounded border border-slate-100 flex items-center justify-center text-slate-400 text-xs overflow-hidden">
-                 System Diagram Init...
-              </div>
-              <p class="text-xs text-slate-400 mt-2 leading-tight" id="topology-desc">
-                系统初始化中...
-              </p>
             </div>
+
+            <div id="group-drive-type" class="hidden mt-2 p-3 bg-slate-50 rounded border border-slate-200">
+              <label class="block text-xs font-bold text-slate-500 mb-2 uppercase tracking-wide">二级驱动技术 (Drive Tech)</label>
+              <div class="flex gap-2">
+                <label class="flex-1 cursor-pointer group">
+                  <input type="radio" name="drive_type" value="ELECTRIC" checked class="peer sr-only">
+                  <div class="text-center py-2 border border-slate-300 rounded bg-white text-slate-600 hover:bg-slate-50 peer-checked:bg-blue-600 peer-checked:text-white peer-checked:border-blue-600 transition text-xs font-bold">
+                    ⚡ 电压缩热泵
+                  </div>
+                </label>
+                <label class="flex-1 cursor-pointer group">
+                  <input type="radio" name="drive_type" value="ABSORPTION" class="peer sr-only">
+                  <div class="text-center py-2 border border-slate-300 rounded bg-white text-slate-600 hover:bg-slate-50 peer-checked:bg-orange-500 peer-checked:text-white peer-checked:border-orange-500 transition text-xs font-bold">
+                    🔥 吸收式热泵
+                  </div>
+                </label>
+              </div>
+            </div>
+            
+            <div id="diagram-container" class="mt-4 h-40 w-full bg-slate-50 rounded border border-slate-100 flex items-center justify-center text-slate-400 text-xs overflow-hidden">
+               System Diagram Init...
+            </div>
+            <p class="text-xs text-slate-400 mt-2 leading-tight" id="topology-desc">
+              系统初始化中...
+            </p>
           </div>
         </div>
 
@@ -135,28 +154,48 @@
               </div>
             </div>
 
-            <details class="group mt-4 border-t border-slate-100 pt-4">
-                <summary class="flex items-center justify-between cursor-pointer list-none text-xs font-bold text-slate-400 hover:text-indigo-600 transition">
-                    <span>🛠️ 高级/专家参数设置 (Advanced)</span>
+            <details class="group mt-4 border-t border-slate-100 pt-4" open>
+                <summary class="flex items-center justify-between cursor-pointer list-none text-xs font-bold text-indigo-600 hover:text-indigo-800 transition">
+                    <span>🛠️ 专家修正 (Engineering Params)</span>
                     <span class="transition group-open:rotate-180">▼</span>
                 </summary>
-                <div class="mt-3 space-y-3 bg-slate-50 p-3 rounded text-xs">
+                
+                <div class="mt-3 space-y-3 bg-indigo-50/50 p-3 rounded text-xs border border-indigo-100">
                     <div>
-                        <label class="block text-slate-500 mb-1">燃料低位热值修正</label>
+                        <label class="block text-slate-500 mb-1 font-bold">实际低位热值 (LHV)</label>
                         <div class="flex gap-2">
-                             <input type="number" id="input-lhv" value="10.0" step="0.1" class="w-full border rounded px-2 py-1">
-                             <span class="text-slate-400 pt-1">kWh/unit</span>
+                             <input type="number" id="input-lhv" value="8600" class="w-2/3 border border-indigo-200 rounded px-2 py-1 font-mono text-slate-700 focus:outline-none focus:border-indigo-500">
+                             <select id="select-lhv-unit" class="w-1/3 border border-indigo-200 rounded text-[10px] bg-white text-slate-600 focus:outline-none">
+                                 <option value="kcal">kcal</option>
+                                 <option value="kWh">kWh</option>
+                                 <option value="MJ">MJ</option>
+                             </select>
                         </div>
                     </div>
-                    <div>
-                        <label class="block text-slate-500 mb-1">过量空气系数 (α)</label>
-                        <input type="number" id="input-alpha" value="1.2" step="0.1" class="w-full border rounded px-2 py-1">
-                        <p class="text-[10px] text-slate-400 mt-1">影响烟气总量 (推荐 1.1-1.4)</p>
+
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="block text-slate-500 mb-1">碳排放因子</label>
+                            <div class="relative">
+                                <input type="number" id="input-co2-factor" value="2.1" step="0.1" class="w-full border border-indigo-200 rounded px-2 py-1 font-mono text-slate-700">
+                                <span class="absolute right-1 top-1 text-[8px] text-slate-400">kg/unit</span>
+                            </div>
+                        </div>
+                        <div>
+                            <label class="block text-slate-500 mb-1">热泵投资概算</label>
+                            <div class="relative">
+                                <input type="number" id="input-capex-unit" value="2800" step="100" class="w-full border border-indigo-200 rounded px-2 py-1 font-mono text-slate-700">
+                                <span class="absolute right-1 top-1 text-[8px] text-slate-400">¥/kW</span>
+                            </div>
+                        </div>
                     </div>
+
                     <div>
                         <label class="block text-slate-500 mb-1">基准锅炉效率 (%)</label>
-                        <input type="number" id="input-base-eff" value="90" step="1" class="w-full border rounded px-2 py-1">
+                        <input type="number" id="input-base-eff" value="90" step="1" class="w-full border border-indigo-200 rounded px-2 py-1 font-mono text-slate-700">
                     </div>
+                    
+                    <input type="hidden" id="input-alpha" value="1.2">
                 </div>
             </details>
           </div>
@@ -165,10 +204,42 @@
             class="w-full mt-6 bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-4 rounded-lg transition shadow-md flex items-center justify-center gap-2">
             <span>🚀 运行仿真 (Simulate)</span>
           </button>
+          
+          <button id="btn-export" disabled
+            class="w-full mt-3 bg-white border border-slate-300 text-slate-600 hover:bg-slate-50 font-bold py-2 px-4 rounded-lg transition flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed">
+            <span>📄 导出可行性报告 (Export PDF)</span>
+          </button>
+
         </div>
       </div>
 
       <div class="lg:col-span-8 space-y-6">
+
+        <div id="pk-result-card" class="hidden bg-slate-800 text-white p-5 rounded-xl shadow-lg border border-slate-700">
+            <div class="flex justify-between items-center mb-4 border-b border-slate-600 pb-2">
+                <h3 class="text-sm font-bold uppercase tracking-widest text-cyan-400">🤖 AI 智能决策建议 (Technology PK)</h3>
+                <span class="text-[10px] bg-slate-700 px-2 py-1 rounded text-slate-300">OPEX Analysis</span>
+            </div>
+            <div class="grid grid-cols-3 gap-4 text-sm items-center">
+                <div class="text-center p-3 rounded transition" id="pk-elec-box">
+                    <div class="text-xs text-slate-400 mb-1 font-bold">⚡ 电压缩方案</div>
+                    <div class="text-xl font-bold font-mono text-white" id="pk-elec-cost">--</div>
+                    <div class="text-[10px] text-slate-500">运行成本 (万元/年)</div>
+                </div>
+                <div class="flex flex-col items-center justify-center">
+                    <div class="text-2xl font-black italic text-slate-600">VS</div>
+                    <div class="text-[10px] text-slate-500 mt-1">Breakeven</div>
+                </div>
+                <div class="text-center p-3 rounded transition" id="pk-abs-box">
+                    <div class="text-xs text-slate-400 mb-1 font-bold">🔥 吸收式方案</div>
+                    <div class="text-xl font-bold font-mono text-white" id="pk-abs-cost">--</div>
+                    <div class="text-[10px] text-slate-500">运行成本 (万元/年)</div>
+                </div>
+            </div>
+            <div class="mt-4 bg-slate-900/50 border border-slate-600 p-2 rounded text-center text-xs font-medium text-cyan-200" id="pk-conclusion">
+                正在计算最优技术路线...
+            </div>
+        </div>
 
         <div class="grid grid-cols-2 sm:grid-cols-4 gap-4">
           <div class="bg-white p-4 rounded-xl shadow-sm border-t-4 border-emerald-500">
@@ -178,15 +249,13 @@
               <span class="text-sm text-emerald-600 font-medium" id="res-cop-unit">ratio</span>
             </div>
           </div>
-
           <div class="bg-white p-4 rounded-xl shadow-sm border-t-4 border-indigo-500">
-            <div class="text-slate-400 text-xs uppercase font-bold tracking-wider">热泵/回收占比</div>
+            <div class="text-slate-400 text-xs uppercase font-bold tracking-wider">潜热回收占比</div>
             <div class="mt-1 flex items-baseline gap-1">
               <span class="text-3xl font-bold text-slate-800" id="res-ratio">--</span>
               <span class="text-sm text-indigo-600 font-medium">%</span>
             </div>
           </div>
-
           <div class="bg-white p-4 rounded-xl shadow-sm border-t-4 border-amber-500">
             <div class="text-slate-400 text-xs uppercase font-bold tracking-wider">投资回收期</div>
             <div class="mt-1 flex items-baseline gap-1">
@@ -194,7 +263,6 @@
               <span class="text-xs text-slate-500 font-medium">年</span>
             </div>
           </div>
-
           <div class="bg-white p-4 rounded-xl shadow-sm border-t-4 border-rose-500">
             <div class="text-slate-400 text-xs uppercase font-bold tracking-wider">每小时收益</div>
             <div class="mt-1 flex items-baseline gap-1">
@@ -233,8 +301,62 @@
       </div>
     </div>
   </main>
+  
+  <div class="hidden">
+    <div id="pdf-report" class="p-8 bg-white text-slate-800 w-[800px]">
+      <div class="border-b-2 border-slate-800 pb-4 mb-6 flex justify-between items-end">
+          <div>
+              <h1 class="text-2xl font-bold text-slate-900">工业余热回收与消白项目</h1>
+              <h2 class="text-lg text-slate-600">可行性研究分析报告 (Feasibility Study)</h2>
+          </div>
+          <div class="text-right text-sm text-slate-500">
+              <p>Generated by IES Simulation v5.0</p>
+              <p id="report-date">Date: 2025-12-08</p>
+          </div>
+      </div>
+      <div class="mb-6">
+          <h3 class="text-md font-bold bg-slate-100 p-2 border-l-4 border-indigo-600 mb-3">1. 设计工况参数</h3>
+          <table class="w-full text-sm text-left border-collapse">
+              <tr class="border-b"><td class="py-2 text-slate-500">系统拓扑方案</td><td class="font-mono font-bold" id="rpt-topology">--</td></tr>
+              <tr class="border-b"><td class="py-2 text-slate-500">设计热负荷</td><td class="font-mono" id="rpt-load">-- kW</td></tr>
+              <tr class="border-b"><td class="py-2 text-slate-500">热源温度</td><td class="font-mono" id="rpt-source">-- °C</td></tr>
+              <tr class="border-b"><td class="py-2 text-slate-500">目标供水温度</td><td class="font-mono" id="rpt-supply">-- °C</td></tr>
+              <tr><td class="py-2 text-slate-500">辅助燃料类型</td><td class="font-mono" id="rpt-fuel">--</td></tr>
+          </table>
+      </div>
+      <div class="mb-6">
+          <h3 class="text-md font-bold bg-slate-100 p-2 border-l-4 border-purple-600 mb-3">2. 能效与环保分析</h3>
+          <div class="grid grid-cols-2 gap-4 text-sm">
+              <div class="p-4 border rounded bg-slate-50">
+                  <p class="text-slate-500">系统综合能效 (COP/Eff)</p>
+                  <p class="text-2xl font-bold text-indigo-700 mt-1" id="rpt-cop">--</p>
+              </div>
+              <div class="p-4 border rounded bg-slate-50">
+                  <p class="text-slate-500">小时碳排放量 (CO2 Emission)</p>
+                  <p class="text-2xl font-bold text-emerald-600 mt-1" id="rpt-co2">-- kg</p>
+              </div>
+          </div>
+          <p class="mt-2 text-xs text-slate-500" id="rpt-env-desc">--</p>
+      </div>
+      <div class="mb-8">
+          <h3 class="text-md font-bold bg-slate-100 p-2 border-l-4 border-amber-500 mb-3">3. 经济效益评估</h3>
+          <table class="w-full text-sm text-left">
+              <thead class="bg-slate-50 text-slate-500">
+                  <tr><th class="py-2 px-2">指标项</th><th class="py-2 px-2">数值</th><th class="py-2 px-2">备注</th></tr>
+              </thead>
+              <tbody class="divide-y divide-slate-100">
+                  <tr><td class="py-2 px-2">运行成本 (每小时)</td><td class="font-bold text-red-600" id="rpt-cost">--</td><td class="text-xs text-slate-400">含电费与燃料费</td></tr>
+                  <tr><td class="py-2 px-2">节省效益 (对比锅炉)</td><td class="font-bold text-green-600" id="rpt-save">--</td><td class="text-xs text-slate-400">每小时节省</td></tr>
+                  <tr><td class="py-2 px-2">预估静态回收期</td><td class="font-bold text-slate-800" id="rpt-payback">--</td><td class="text-xs text-slate-400">基于年运行4000h估算</td></tr>
+              </tbody>
+          </table>
+      </div>
+      <div class="mt-12 pt-4 border-t border-slate-200 text-xs text-slate-400 text-center">
+          <p>© 2025 Hybrid Boiler-Heat Pump Systems Simulator</p>
+      </div>
+    </div>
+  </div>
 
 
 </body>
-
 </html>
