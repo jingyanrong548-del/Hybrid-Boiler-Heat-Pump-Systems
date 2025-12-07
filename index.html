@@ -4,9 +4,9 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>工业级多能源耦合系统仿真</title>
-  <script type="module" crossorigin src="./assets/index-BhzRhgM9.js"></script>
-  <link rel="stylesheet" crossorigin href="./assets/index-Cby8SZPi.css">
+  <title>工业综合能源系统仿真 (IES Simulation)</title>
+  <script type="module" crossorigin src="./assets/index-CnjwFGIo.js"></script>
+  <link rel="stylesheet" crossorigin href="./assets/index-Ck6jCxaB.css">
 </head>
 
 <body class="bg-slate-50 text-slate-800 antialiased font-sans">
@@ -19,7 +19,7 @@
       </div>
       <div class="flex items-center gap-4">
         <span class="text-xs text-slate-400">Core: CoolProp WASM</span>
-        <span class="text-xs bg-indigo-600 px-3 py-1 rounded-full font-mono">v2.0 Industrial</span>
+        <span class="text-xs bg-emerald-600 px-3 py-1 rounded-full font-mono">v3.0 Flue Gas</span>
       </div>
     </div>
   </header>
@@ -29,25 +29,28 @@
     <div class="grid grid-cols-1 lg:grid-cols-12 gap-8">
 
       <div class="lg:col-span-4 space-y-6">
-
+        
         <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
           <h2 class="text-sm font-bold text-slate-500 uppercase tracking-wider mb-4 border-b pb-2">
             🔌 系统拓扑结构 (Topology)
           </h2>
-
+          
           <div class="space-y-4">
             <div>
               <label class="block text-sm font-medium text-slate-700 mb-2">选择耦合模式</label>
-              <select id="select-topology"
+              <select id="select-topology" 
                 class="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-slate-700 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition">
                 <option value="PARALLEL">方案 A: 传统解耦 (环境源 + 锅炉)</option>
                 <option value="COUPLED">方案 B: 余热耦合 (余热源 + 锅炉)</option>
+                <option value="FLUE_GAS">方案 C: 烟气深度回收 (消白+节能)</option>
               </select>
-
-              <div id="diagram-container"
-                class="mt-4 h-40 w-full bg-slate-50 rounded border border-slate-100 flex items-center justify-center text-slate-400 text-xs">
-                System Diagram Init...
+              
+              <div id="diagram-container" class="mt-4 h-48 w-full bg-slate-50 rounded border border-slate-100 flex items-center justify-center text-slate-400 text-xs overflow-hidden">
+                 System Diagram Init...
               </div>
+              <p class="text-xs text-slate-400 mt-2 leading-tight" id="topology-desc">
+                系统初始化中...
+              </p>
             </div>
           </div>
         </div>
@@ -65,6 +68,16 @@
                   class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none transition font-mono text-slate-700">
                 <span class="absolute right-3 text-slate-400 text-sm">°C</span>
               </div>
+            </div>
+
+            <div id="group-exhaust-temp" class="relative hidden">
+              <label class="block text-sm font-medium text-purple-700 mb-1">锅炉排烟温度 (°C)</label>
+              <div class="flex items-center">
+                <input type="number" id="input-exhaust-temp" value="130"
+                  class="w-full px-3 py-2 border border-purple-300 bg-purple-50 rounded-lg focus:ring-2 focus:ring-purple-500 focus:outline-none transition font-mono text-slate-700">
+                <span class="absolute right-3 text-slate-400 text-sm">°C</span>
+              </div>
+              <p class="text-[10px] text-slate-400 mt-1">用于计算显热与潜热回收潜力</p>
             </div>
 
             <div>
@@ -89,13 +102,13 @@
 
         <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
           <h2 class="text-sm font-bold text-slate-500 uppercase tracking-wider mb-4 border-b pb-2">
-            💰 能源经济性 (Economics)
+            💰 能源与专家设置
           </h2>
 
           <div class="space-y-4">
             <div>
-              <label class="block text-xs font-medium text-slate-500 mb-1">辅助燃料类型</label>
-              <select id="select-fuel"
+              <label class="block text-xs font-medium text-slate-500 mb-1">主要燃料类型</label>
+              <select id="select-fuel" 
                 class="w-full px-2 py-1.5 text-sm border border-slate-300 rounded-md focus:ring-1 focus:ring-indigo-500">
                 <option value="NATURAL_GAS">天然气 (Natural Gas)</option>
                 <option value="STEAM">管道蒸汽 (Piped Steam)</option>
@@ -115,12 +128,37 @@
               <div>
                 <label class="block text-xs text-slate-500 mb-1">燃料单价</label>
                 <div class="relative">
-                  <input type="number" id="input-fuel-price" value="3.80" step="0.1"
+                   <input type="number" id="input-fuel-price" value="3.80" step="0.1"
                     class="w-full px-2 py-1.5 text-sm border border-slate-300 rounded focus:ring-1 focus:ring-indigo-500 font-mono">
-                  <span id="label-fuel-unit" class="absolute right-2 top-1.5 text-xs text-slate-400">/m³</span>
+                   <span id="label-fuel-unit" class="absolute right-2 top-1.5 text-xs text-slate-400">/m³</span>
                 </div>
               </div>
             </div>
+
+            <details class="group mt-4 border-t border-slate-100 pt-4">
+                <summary class="flex items-center justify-between cursor-pointer list-none text-xs font-bold text-slate-400 hover:text-indigo-600 transition">
+                    <span>🛠️ 高级/专家参数设置 (Advanced)</span>
+                    <span class="transition group-open:rotate-180">▼</span>
+                </summary>
+                <div class="mt-3 space-y-3 bg-slate-50 p-3 rounded text-xs">
+                    <div>
+                        <label class="block text-slate-500 mb-1">燃料低位热值修正</label>
+                        <div class="flex gap-2">
+                             <input type="number" id="input-lhv" value="10.0" step="0.1" class="w-full border rounded px-2 py-1">
+                             <span class="text-slate-400 pt-1">kWh/unit</span>
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-slate-500 mb-1">过量空气系数 (α)</label>
+                        <input type="number" id="input-alpha" value="1.2" step="0.1" class="w-full border rounded px-2 py-1">
+                        <p class="text-[10px] text-slate-400 mt-1">影响烟气总量 (推荐 1.1-1.4)</p>
+                    </div>
+                    <div>
+                        <label class="block text-slate-500 mb-1">基准锅炉效率 (%)</label>
+                        <input type="number" id="input-base-eff" value="90" step="1" class="w-full border rounded px-2 py-1">
+                    </div>
+                </div>
+            </details>
           </div>
 
           <button id="btn-calculate"
@@ -134,15 +172,15 @@
 
         <div class="grid grid-cols-2 sm:grid-cols-4 gap-4">
           <div class="bg-white p-4 rounded-xl shadow-sm border-t-4 border-emerald-500">
-            <div class="text-slate-400 text-xs uppercase font-bold tracking-wider">综合 COP</div>
+            <div class="text-slate-400 text-xs uppercase font-bold tracking-wider">系统综合效率</div>
             <div class="mt-1 flex items-baseline gap-1">
               <span class="text-3xl font-bold text-slate-800" id="res-cop">--</span>
-              <span class="text-sm text-emerald-600 font-medium">ratio</span>
+              <span class="text-sm text-emerald-600 font-medium" id="res-cop-unit">ratio</span>
             </div>
           </div>
 
           <div class="bg-white p-4 rounded-xl shadow-sm border-t-4 border-indigo-500">
-            <div class="text-slate-400 text-xs uppercase font-bold tracking-wider">热泵负荷占比</div>
+            <div class="text-slate-400 text-xs uppercase font-bold tracking-wider">热泵/回收占比</div>
             <div class="mt-1 flex items-baseline gap-1">
               <span class="text-3xl font-bold text-slate-800" id="res-ratio">--</span>
               <span class="text-sm text-indigo-600 font-medium">%</span>
@@ -150,15 +188,15 @@
           </div>
 
           <div class="bg-white p-4 rounded-xl shadow-sm border-t-4 border-amber-500">
-            <div class="text-slate-400 text-xs uppercase font-bold tracking-wider">小时能耗</div>
+            <div class="text-slate-400 text-xs uppercase font-bold tracking-wider">投资回收期</div>
             <div class="mt-1 flex items-baseline gap-1">
               <span class="text-2xl font-bold text-slate-800" id="res-power">--</span>
-              <span class="text-xs text-slate-500 font-medium">kW / m³</span>
+              <span class="text-xs text-slate-500 font-medium">年</span>
             </div>
           </div>
 
           <div class="bg-white p-4 rounded-xl shadow-sm border-t-4 border-rose-500">
-            <div class="text-slate-400 text-xs uppercase font-bold tracking-wider">运行成本</div>
+            <div class="text-slate-400 text-xs uppercase font-bold tracking-wider">每小时收益</div>
             <div class="mt-1 flex items-baseline gap-1">
               <span class="text-sm text-slate-500">¥</span>
               <span class="text-3xl font-bold text-slate-800" id="res-cost">--</span>
@@ -169,8 +207,8 @@
 
         <div class="bg-white p-6 rounded-xl shadow-md border border-slate-200">
           <div class="flex items-center justify-between mb-4">
-            <h3 class="text-lg font-bold text-slate-700">性能特性曲线 (Performance Curve)</h3>
-            <span class="text-xs text-slate-400 bg-slate-100 px-2 py-1 rounded">R134a Cycle</span>
+            <h3 class="text-lg font-bold text-slate-700">性能特性曲线 (Performance Analysis)</h3>
+            <span class="text-xs text-slate-400 bg-slate-100 px-2 py-1 rounded">Real-time Simulation</span>
           </div>
           <div class="relative h-80 w-full">
             <canvas id="performance-chart"></canvas>
@@ -178,18 +216,18 @@
         </div>
 
         <div class="bg-slate-900 rounded-xl shadow-md overflow-hidden flex flex-col h-64 border border-slate-700">
-          <div class="bg-slate-800 px-4 py-2 border-b border-slate-700 flex justify-between items-center">
-            <span class="text-xs font-mono text-slate-300">System Log / Console</span>
-            <div class="flex gap-1.5">
-              <div class="w-2.5 h-2.5 rounded-full bg-red-500"></div>
-              <div class="w-2.5 h-2.5 rounded-full bg-yellow-500"></div>
-              <div class="w-2.5 h-2.5 rounded-full bg-green-500"></div>
+            <div class="bg-slate-800 px-4 py-2 border-b border-slate-700 flex justify-between items-center">
+                <span class="text-xs font-mono text-slate-300">System Log / Console</span>
+                <div class="flex gap-1.5">
+                    <div class="w-2.5 h-2.5 rounded-full bg-red-500"></div>
+                    <div class="w-2.5 h-2.5 rounded-full bg-yellow-500"></div>
+                    <div class="w-2.5 h-2.5 rounded-full bg-green-500"></div>
+                </div>
             </div>
-          </div>
-          <div id="system-log" class="p-4 font-mono text-xs text-green-400 overflow-y-auto flex-1 space-y-1">
-            <div>> Initializing System Kernel... [OK]</div>
-            <div>> Waiting for user input...</div>
-          </div>
+            <div id="system-log" class="p-4 font-mono text-xs text-green-400 overflow-y-auto flex-1 space-y-1">
+                <div>> Initializing System Kernel... [OK]</div>
+                <div>> Waiting for user input...</div>
+            </div>
         </div>
 
       </div>
