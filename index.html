@@ -17,7 +17,7 @@
       </div>
       <div class="flex items-center gap-4">
         <span class="text-xs text-slate-400">Core: Process Model</span>
-        <span class="text-xs bg-violet-600 px-3 py-1 rounded-full font-mono">v7.4 Stable Fix</span>
+        <span class="text-xs bg-amber-600 px-3 py-1 rounded-full font-mono text-white">v7.9 Steam Enhanced</span>
       </div>
     </div>
   </header>
@@ -95,7 +95,35 @@
                     <span class="absolute right-6 top-1.5 text-orange-400 text-xs pointer-events-none bg-white pl-1">°C</span>
                   </div>
                 </div>
-                <div>
+
+                <div id="box-steam-strategy" class="hidden space-y-2 pt-2 border-t border-orange-200 border-dashed">
+                   <label class="block text-xs font-bold text-orange-900">♨️ 蒸汽/补水策略 (Strategy)</label>
+                   <select id="select-steam-strategy" class="w-full px-2 py-1.5 text-xs border border-orange-300 rounded focus:ring-1 focus:ring-orange-500 bg-white font-medium text-slate-700">
+                       <option value="STRATEGY_PRE">锅炉补水预热 (Feed Preheating)</option>
+                       <option value="STRATEGY_GEN">直接生产蒸汽 (Direct Generation)</option>
+                   </select>
+                </div>
+
+                <div id="box-feed-params" class="hidden grid grid-cols-2 gap-2">
+                    <div class="relative">
+                         <label class="block text-[10px] font-bold text-orange-800 mb-1">初始补水温度</label>
+                         <div class="relative">
+                            <input type="number" id="input-temp-feed" value="20"
+                              class="w-full pl-2 pr-6 py-1.5 border border-orange-200 rounded focus:ring-1 focus:ring-orange-500 font-mono text-slate-700 text-xs">
+                            <span class="absolute right-2 top-1.5 text-orange-400 text-[10px] pointer-events-none">°C</span>
+                         </div>
+                    </div>
+                    <div class="relative" id="div-temp-pre">
+                         <label class="block text-[10px] font-bold text-orange-800 mb-1">预热目标温度</label>
+                         <div class="relative">
+                            <input type="number" id="input-temp-pre" value="90"
+                              class="w-full pl-2 pr-6 py-1.5 border border-orange-200 rounded focus:ring-1 focus:ring-orange-500 font-mono text-slate-700 text-xs">
+                            <span class="absolute right-2 top-1.5 text-orange-400 text-[10px] pointer-events-none">°C</span>
+                         </div>
+                    </div>
+                </div>
+
+                <div class="pt-2 border-t border-orange-200">
                    <label class="block text-xs font-medium text-orange-800 mb-1">热泵技术类型</label>
                    <select id="select-recovery-type" class="w-full px-2 py-1.5 text-xs border border-orange-200 rounded focus:ring-1 focus:ring-orange-500 bg-white">
                        <option value="ELECTRIC_HP">电动压缩式 (MVR/Heat Pump)</option>
@@ -356,7 +384,7 @@
             </div>
           </div>
           <div id="system-log" class="p-4 font-mono text-[10px] text-green-400 overflow-y-auto flex-1 space-y-1">
-            <div>> Initializing v7.4 Stable Fix... [OK]</div>
+            <div>> Initializing v7.9 Steam Enhanced... [OK]</div>
             <div>> Waiting for user input...</div>
           </div>
         </div>
@@ -368,3 +396,4 @@
   <script type="module" src="/src/main.js"></script>
 </body>
 </html>
+}

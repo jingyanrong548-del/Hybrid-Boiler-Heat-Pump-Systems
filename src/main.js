@@ -1,4 +1,4 @@
-// src/main.js - v7.8 Parameter Sync
+// src/main.js - v7.9 Steam Enhanced (UI Control & Wiring)
 
 import './style.css'
 import {
@@ -23,6 +23,14 @@ const dom = {
     // 面板
     panelStd: document.getElementById('panel-input-standard'),
     panelRec: document.getElementById('panel-input-recovery'),
+
+    // v7.9 新增控件
+    boxSteamStrat: document.getElementById('box-steam-strategy'),
+    selSteamStrat: document.getElementById('select-steam-strategy'),
+    boxFeedParams: document.getElementById('box-feed-params'),
+    inpTempFeed: document.getElementById('input-temp-feed'),
+    divTempPre: document.getElementById('div-temp-pre'),
+    inpTempPre: document.getElementById('input-temp-pre'),
 
     // 输入
     lblSource: document.getElementById('label-source-temp'),
@@ -84,13 +92,15 @@ function log(msg, type = 'info') {
     const time = new Date().toLocaleTimeString('en-GB');
     let clr = 'text-green-400';
     if (type === 'error') clr = 'text-red-400';
-    if (type === 'warn') clr = 'text-yellow-400';
+    if (type === 'warn') clr = 'text-yellow-400 font-bold';
     if (type === 'eco') clr = 'text-emerald-300 font-bold';
     if (dom.log) {
         dom.log.innerHTML += `<div class="${clr} border-l-2 border-transparent pl-1 hover:bg-slate-800"><span class="opacity-50">[${time}]</span> ${msg}</div>`;
         dom.log.scrollTop = dom.log.scrollHeight;
     }
 }
+
+// --- 配置联动 ---
 
 function updateUnitOptions(fuelKey) {
     const db = FuelDatabase[fuelKey];
@@ -152,6 +162,32 @@ dom.selUnitCo2.addEventListener('change', () => {
     prevCo2Unit = dom.selUnitCo2.value;
 });
 
+// 🟢 v7.9 新增: 控制蒸汽策略面板的显隐
+function updateSteamUI() {
+    const topo = dom.topo.value;
+    const mode = dom.inpMode.value;
+    const strat = dom.selSteamStrat.value;
+
+    // 1. 只有在 Recovery + Steam 模式下才显示策略选择器
+    if (topo === 'RECOVERY' && mode === 'STEAM') {
+        dom.boxSteamStrat.classList.remove('hidden');
+        dom.boxFeedParams.classList.remove('hidden');
+        
+        // 2. 根据策略显示不同的补水参数
+        if (strat === 'STRATEGY_PRE') {
+            dom.divTempPre.classList.remove('hidden'); // 预热需要填目标温度
+        } else {
+            dom.divTempPre.classList.add('hidden');    // 直产蒸汽不需要填(用饱和温度)
+        }
+    } else {
+        dom.boxSteamStrat.classList.add('hidden');
+        dom.boxFeedParams.classList.add('hidden');
+    }
+}
+
+// 监听策略改变
+dom.selSteamStrat.addEventListener('change', updateSteamUI);
+
 dom.topo.addEventListener('change', (e) => {
     const topo = e.target.value;
     if (topo === 'RECOVERY') {
@@ -180,6 +216,7 @@ dom.topo.addEventListener('change', (e) => {
             dom.inpSource.value = "-5";
         }
     }
+    updateSteamUI(); // 触发UI更新
     updateDiagram();
 });
 
@@ -200,6 +237,7 @@ function setTargetMode(mode) {
         dom.unitTarget.innerText = "°C";
         dom.boxSteamInfo.classList.add('hidden');
     }
+    updateSteamUI(); // 触发UI更新
 }
 dom.btnWater.addEventListener('click', () => setTargetMode('WATER'));
 dom.btnSteam.addEventListener('click', () => setTargetMode('STEAM'));
@@ -220,6 +258,8 @@ dom.chkManualCop.addEventListener('change', (e) => {
     dom.inpManualCop.disabled = !e.target.checked;
     e.target.checked ? dom.inpManualCop.classList.replace('bg-slate-100', 'bg-white') : dom.inpManualCop.classList.replace('bg-white', 'bg-slate-100');
 });
+
+// --- 计算核心 ---
 
 dom.btnCalc.addEventListener('click', () => {
     const topo = dom.topo.value;
@@ -264,9 +304,12 @@ dom.btnCalc.addEventListener('click', () => {
         capexHP: parseFloat(dom.inpCapexHP.value),
         capexBase: parseFloat(dom.inpCapexBase.value),
         pefElec: parseFloat(dom.inpPefElec.value),
+        perfectionDegree: perfDegree,
 
-        // 🟢 修复：显式传递用户设置的完善度
-        perfectionDegree: perfDegree
+        // 🟢 v7.9 透传新参数
+        steamStrategy: dom.selSteamStrat.value,
+        tFeed: parseFloat(dom.inpTempFeed.value),
+        tPre: parseFloat(dom.inpTempPre.value)
     });
 
     let displayCop = 0;
@@ -284,6 +327,11 @@ dom.btnCalc.addEventListener('click', () => {
     let recoveredKW = 0;
 
     if (topo === 'RECOVERY') {
+        // 🟢 v7.9 热汇限制警告逻辑
+        if (strat.sinkLimited) {
+            log(`⚠️ 热汇限制: 水流量不足, 实际排烟 ${strat.exhaustOutActual}°C`, 'warn');
+        }
+
         dom.resLift.innerText = strat.waterRecovery > 0 ? strat.waterRecovery.toFixed(2) : "0.0";
 
         const baseEff = parseFloat(dom.inpFuelEff.value);
@@ -296,15 +344,12 @@ dom.btnCalc.addEventListener('click', () => {
             <span class="text-xl text-violet-600 font-bold">${sysEff.toFixed(2)}</span>
         `;
 
-        // --- 🟢 新增：智能提示逻辑 (Tooltip Logic) ---
+        // Tooltip Logic
         const isAbs = (dom.selRecType.value === 'ABSORPTION_HP');
-
-        // 根据设备类型，动态生成解释文案
         const hintText = isAbs
             ? "💡 能量守恒：吸收式热泵消耗的驱动热量（蒸汽/燃气）在做功后并未消失，而是全部进入了供水系统，相当于'第二热源'，因此总热增益显著。"
             : "⚡️ 搬运机制：电动热泵仅消耗少量高品位电能来搬运低品位余热，系统增量主要纯来自于回收的余热本身。";
 
-        // 使用 Tailwind 的 group 和 group-hover 实现悬浮提示
         dom.descRes3.innerHTML = `
             <div class="group relative flex items-center cursor-help">
                 <span class="text-emerald-500 font-bold">Boost: +${(hpRatio * 1).toFixed(1)}%</span>
@@ -339,8 +384,13 @@ dom.btnCalc.addEventListener('click', () => {
         dom.resPayback.innerText = "--";
     }
 
+    // 准备图表所需的真实目标温度
+    const chartTargetTemp = (mode === 'STEAM') 
+        ? getSatTempFromPressure(tgtVal) 
+        : tgtVal;
+
     // 传递完善度和热泵类型给图表
-    updateChart(topo, mode, srcT, tgtVal, perfDegree, dom.selRecType.value);
+    updateChart(topo, mode, srcT, chartTargetTemp, perfDegree, dom.selRecType.value);
 
     // 传递回收热量给拓扑图
     updateDiagram(recoveredKW);
@@ -361,6 +411,7 @@ function updateDiagram(recoveredKW = 0) {
     });
 }
 
+// Init
 setTargetMode('WATER');
 dom.selFuel.dispatchEvent(new Event('change'));
 updateDiagram();

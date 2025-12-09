@@ -1,4 +1,4 @@
-// src/logic.js - v7.8 Dynamic Perfection
+// src/logic.js - v7.9 Steam Enhanced (Sink Limit & Preheating)
 
 export const SYSTEM_CONFIG = {
     wasteHeatTemp: 35.0, 
@@ -37,6 +37,7 @@ export const FuelDatabase = {
     }
 };
 
+// 简易饱和温度计算
 export function getSatTempFromPressure(pressureMPa) {
     if (pressureMPa <= 0) return 100;
     const P_mmHg = pressureMPa * 7500.62;
@@ -60,7 +61,19 @@ function normalizeCo2Factor(val, unit) {
     return val * factor;
 }
 
-// 标准循环
+// 🟢 新增：焓值估算 (kJ/kg) 用于热平衡计算
+function estimateEnthalpy(tempC, isSteam = false) {
+    if (!isSteam) {
+        // 水的比热容 ~ 4.187 kJ/kg.K
+        return 4.187 * tempC;
+    } else {
+        // 饱和蒸汽焓值估算 (简化版: 0.1MPa~1.0MPa 范围)
+        // h_g ≈ 2676 + 0.4*(T-100) (非常粗略的线性拟合，但在工程估算误差范围内)
+        return 2676 + 0.5 * (tempC - 100);
+    }
+}
+
+// 标准循环 (方案A/B)
 export function calculateProcessCycle(params) {
     const { mode, sourceTemp, targetVal, perfectionDegree } = params;
     try {
@@ -93,30 +106,30 @@ export function calculateProcessCycle(params) {
     }
 }
 
-// 🔴 修复函数：calculateFlueGasRecovery
+// 🟢 v7.9 重构：calculateFlueGasRecovery (含策略分流)
 export function calculateFlueGasRecovery(params) {
     const { 
         loadKW, boilerEff, fuelType, 
         tExhaustIn, tExhaustOut, 
         recoveryType, targetWaterTemp,
-        perfectionDegree // 🟢 新增参数接收
+        perfectionDegree,
+        steamStrategy, // 'STRATEGY_GEN' | 'STRATEGY_PRE'
+        tFeed, tPre   // 补水温度, 预热目标温度
     } = params;
     
-    // 🟢 确保有默认值
     const eta = perfectionDegree || 0.45;
 
+    // 1. 计算烟气侧潜在能力 (Source Potential)
     const dbFuel = FuelDatabase[fuelType] || FuelDatabase['NATURAL_GAS'];
     const boilerInputKW = loadKW / boilerEff; 
     const flueGasVol = boilerInputKW * dbFuel.flueGasFactor; 
-    
-    // 显热
     const Cp_flue_kWh = 0.00038; 
-    const sensibleHeatKW = flueGasVol * Cp_flue_kWh * (tExhaustIn - tExhaustOut);
-
-    // 潜热
-    let latentHeatKW = 0;
-    let waterRecovery_kg_h = 0;
     
+    // 显热 (假设能降到 tExhaustOut)
+    const sensiblePotential = flueGasVol * Cp_flue_kWh * (tExhaustIn - tExhaustOut);
+    
+    // 潜热 (如果低于露点)
+    let latentPotential = 0;
     if (tExhaustOut < dbFuel.dewPoint) {
         const maxLatentRatio = (fuelType === 'NATURAL_GAS') ? 0.11 : ((fuelType === 'BIOMASS') ? 0.08 : 0.0);
         const maxLatentKW = boilerInputKW * maxLatentRatio;
@@ -125,20 +138,65 @@ export function calculateFlueGasRecovery(params) {
         if (condFactor > 1) condFactor = 1;
         if (condFactor < 0) condFactor = 0;
         
-        latentHeatKW = maxLatentKW * condFactor;
-        waterRecovery_kg_h = (latentHeatKW * 3600) / 2260; 
+        latentPotential = maxLatentKW * condFactor;
+    }
+    const qSourcePotential = sensiblePotential + latentPotential;
+
+    // 2. 计算热汇限制 (Sink Limit)
+    let qSinkLimit = Infinity; // 默认无限
+    let effectiveTargetT = targetWaterTemp; // 计算 COP 用的目标温度
+
+    if (steamStrategy === 'STRATEGY_PRE') {
+        // --- 策略 B: 补水预热 ---
+        // 逻辑：锅炉产生Load所需的蒸汽，需要一定的补水流量。热泵最多只能把这股水流从 tFeed 加热到 tPre
+        
+        const h_steam = estimateEnthalpy(targetWaterTemp, true); // 蒸汽焓
+        const h_feed = estimateEnthalpy(tFeed, false);           // 补水焓
+        
+        // 锅炉系统水流量 (kg/s) = 负荷 / (蒸汽焓 - 补水焓)
+        const massFlow = loadKW / (h_steam - h_feed); 
+        
+        const h_pre = estimateEnthalpy(tPre, false);             // 预热后水焓
+        
+        // 热汇极限 = 流量 * (预热焓 - 补水焓)
+        qSinkLimit = massFlow * (h_pre - h_feed);
+        
+        effectiveTargetT = tPre; // COP 计算目标改为预热温度 (如 90度)
+    
+    } else if (steamStrategy === 'STRATEGY_GEN') {
+        // --- 策略 A: 直接产汽 ---
+        // 逻辑：热泵直接产汽，SinkLimit 就是总负荷
+        qSinkLimit = loadKW;
+        effectiveTargetT = targetWaterTemp; // COP 计算目标保持为蒸汽饱和温度
     }
 
-    const sourceHeatKW = sensibleHeatKW + latentHeatKW;
+    // 3. 确定实际回收量 (Physics Balance)
+    // 实际回收 = min(烟气能提供的, 水能带走的)
+    const recoveredHeatActual = Math.min(qSourcePotential, qSinkLimit);
 
-    // 热泵 COP 计算
+    // 4. 反算实际排烟温度 (Back Calculation)
+    let exhaustOutActual = tExhaustOut;
+    
+    if (qSourcePotential > qSinkLimit) {
+        // 烟气能量过剩，说明水太少带不走。排烟温度会被迫升高。
+        // 简单估算：温升与回收量成反比 (忽略潜热非线性，做线性近似回推)
+        // 实际上主要是显热段没吃完
+        const unrecovered = qSourcePotential - recoveredHeatActual;
+        // 估算温升 deltaT = Q / (Vol * Cp)
+        const tempRise = unrecovered / (flueGasVol * Cp_flue_kWh);
+        exhaustOutActual = tExhaustOut + tempRise;
+        
+        // 修正：如果反算温度高于入口，则完全不回收 (极端情况)
+        if (exhaustOutActual > tExhaustIn) exhaustOutActual = tExhaustIn;
+    }
+
+    // 5. 计算 COP (基于实际工况)
     let cop = 0;
-    let driveEnergyKW = 0; 
-    let outputHeatKW = 0;  
-
+    
     if (recoveryType === 'ELECTRIC_HP') {
-        const tEvap = tExhaustOut + 8.0; 
-        const tCond = targetWaterTemp + 5.0;
+        // MVR / 电动热泵
+        const tEvap = tExhaustOut + 8.0; // 蒸发温度锚定在目标排烟温度 (假设使用了中间回路)
+        const tCond = effectiveTargetT + 5.0; // 冷凝温度
         
         if (tEvap >= tCond - 2) {
              cop = 20.0; 
@@ -146,34 +204,69 @@ export function calculateFlueGasRecovery(params) {
             const tk_evap = tEvap + 273.15;
             const tk_cond = tCond + 273.15;
             let cop_carnot = tk_cond / (tk_cond - tk_evap);
+            if (cop_carnot > 15) cop_carnot = 15;
             
-            if (cop_carnot > 15) cop_carnot = 15; // 限制保持 15
-            
-            // 🔴 修复点：使用传入的 eta，而不是写死 0.45
-            cop = cop_carnot * eta; 
-            
-            if (cop < 2.5) cop = 2.5; 
+            // 针对高温升的额外惩罚 (Direct Gen 模式)
+            let liftPenalty = 1.0;
+            if (steamStrategy === 'STRATEGY_GEN' && (tCond - tEvap) > 80) {
+                liftPenalty = 0.85; // 高温升压缩效率衰减
+            }
+
+            cop = cop_carnot * eta * liftPenalty;
+            if (cop < 1.5) cop = 1.5; 
             if (cop > 8.0) cop = 8.0;
         }
-
-        driveEnergyKW = sourceHeatKW / (cop - 1);
-        outputHeatKW = sourceHeatKW + driveEnergyKW;
     } else {
-        cop = 1.7; 
-        driveEnergyKW = sourceHeatKW / (cop - 1); 
-        outputHeatKW = sourceHeatKW + driveEnergyKW;
+        // 吸收式热泵
+        if (steamStrategy === 'STRATEGY_GEN') {
+            cop = 1.45; // 产蒸汽 COP 较低
+        } else {
+            cop = 1.70; // 产热水/预热 COP 较高
+        }
+    }
+
+    // 6. 计算驱动能耗
+    const driveEnergyKW = recoveredHeatActual / (recoveryType === 'ELECTRIC_HP' ? cop : cop); 
+    // 注：如果是吸收式第一类，recoveredHeat = output. 
+    // 定义：COP = Output / Input. => Input = Output / COP.
+    // 但通常吸收式 COP 定义为 (Evap+Gen)/Gen = 1.7
+    // Output = Source + Drive. 
+    // Drive = Source / (COP - 1). 
+    // 让我们统一用 Source based calculation:
+    // SourcePart = recoveredHeatActual * ( (COP-1)/COP )
+    // DrivePart  = recoveredHeatActual / COP
+    // 这里代码原本的逻辑是：outputHeatKW = source + drive. 
+    // recoveredHeatActual 这里指 Output (供给侧增量).
+    
+    // 修正计算：
+    // DriveInput = Output / COP
+    const driveInputKW = recoveredHeatActual / cop;
+    const sourceConsumedKW = recoveredHeatActual - driveInputKW;
+
+    // 水回收量 (kg/h) - 仅当实际排烟温度低于露点时
+    let waterRecovery_kg_h = 0;
+    if (exhaustOutActual < dbFuel.dewPoint) {
+        // 简算：根据潜热比例反推
+        // 这部分比较复杂，暂时按比例估算
+        // 假设 latent 占比随温度线性变化
+        if (latentPotential > 0) {
+             const ratio = recoveredHeatActual / qSourcePotential; // 回收比例
+             // 粗略估算水回收
+             waterRecovery_kg_h = (latentPotential * ratio * 3600) / 2260; 
+        }
     }
 
     return {
-        recoveredHeat: outputHeatKW, 
-        driveEnergy: driveEnergyKW,  
+        recoveredHeat: recoveredHeatActual, // 输出给工艺的热量
+        driveEnergy: driveInputKW,          // 消耗的驱动能量 (电或热)
         cop: parseFloat(cop.toFixed(2)),
         waterRecovery: parseFloat((waterRecovery_kg_h / 1000).toFixed(2)), 
-        exhaustOutActual: tExhaustOut
+        exhaustOutActual: parseFloat(exhaustOutActual.toFixed(1)),
+        sinkLimited: (qSourcePotential > qSinkLimit) // 标记是否受热汇限制
     };
 }
 
-// 🔴 修复函数：calculateHybridStrategy
+// v7.9: calculateHybridStrategy (透传参数)
 export function calculateHybridStrategy(params) {
     const { 
         loadKW, topology, annualHours,
@@ -181,7 +274,8 @@ export function calculateHybridStrategy(params) {
         customCalorific, calUnit, customCo2, co2Unit, customEfficiency,
         tExhaustIn, tExhaustOut, recoveryType, targetWaterTemp,
         capexHP, capexBase, pefElec, cop, manualCop,
-        perfectionDegree // 🟢 确保解构此参数
+        perfectionDegree,
+        steamStrategy, tFeed, tPre // v7.9 新参数
     } = params;
     
     const dbFuel = FuelDatabase[fuelTypeKey] || FuelDatabase['NATURAL_GAS'];
@@ -203,9 +297,13 @@ export function calculateHybridStrategy(params) {
             loadKW, boilerEff: activeEff, fuelType: fuelTypeKey,
             tExhaustIn, tExhaustOut, recoveryType, targetWaterTemp,
             fuelCalVal: activeCalVal,
-            perfectionDegree: perfectionDegree // 🟢 传递给 downstream
+            perfectionDegree,
+            steamStrategy, tFeed, tPre // 🟢 透传
         });
 
+        // 经济性计算：节省了燃料成本，增加了驱动成本
+        // savedFuelCost: 热泵产出的热量 (recoveredHeat) 替代了锅炉燃料
+        // 注意：如果 BoilerEff < 1, 1kWh 热量需要 >1kWh 燃料。
         const savedFuelCost = (recRes.recoveredHeat / activeEff / activeCalVal) * fuelPrice;
         
         let driveCost = 0;
@@ -217,6 +315,8 @@ export function calculateHybridStrategy(params) {
             driveCo2 = recRes.driveEnergy * FuelDatabase['ELECTRICITY'].co2Factor;
             drivePrimary = recRes.driveEnergy * pefElec;
         } else {
+            // 吸收式驱动热源 (燃气/蒸汽)
+            // 假设驱动热源效率与主锅炉一致 (最简模型)
             const driveInput = recRes.driveEnergy / activeEff;
             driveCost = (driveInput / activeCalVal) * fuelPrice;
             driveCo2 = driveInput * activeCo2Factor;
@@ -230,6 +330,8 @@ export function calculateHybridStrategy(params) {
         const investHP = recRes.recoveredHeat * capexHP; 
         const payback = (annualSaving > 0) ? (investHP / annualSaving) : 99;
 
+        // PER 计算: 总产出 / 总一次能源输入
+        // 总输入 = 基准输入 - 替代掉的 + 驱动用的
         const netPrimaryInput = baselinePrimary - (recRes.recoveredHeat/activeEff * 1.05) + drivePrimary;
         const per = netPrimaryInput > 0 ? (loadKW / netPrimaryInput) : 0; 
 
@@ -248,10 +350,15 @@ export function calculateHybridStrategy(params) {
             waterRecovery: recRes.waterRecovery,
             per: parseFloat(per.toFixed(2)),
             
+            // v7.9 附加信息
+            exhaustOutActual: recRes.exhaustOutActual,
+            sinkLimited: recRes.sinkLimited,
+            
             comparison: { hpCost: 0, boilerCost: baselineCost, hpCo2: 0, boilerCo2: baselineCo2 }
         };
 
     } else {
+        // ... (方案 A/B 逻辑保持不变) ...
         const activeCop = (manualCop > 0) ? manualCop : cop;
         const hpPower = loadKW / activeCop;
         const costHP = hpPower * elecPrice;

@@ -1,13 +1,14 @@
-// src/diagram.js - v7.7 Bubble Effect
+// src/diagram.js - v7.9 Visual Engine (Steam Ready)
 
 export function renderSystemDiagram(containerId, params) {
     const container = document.getElementById(containerId);
     if (!container) return;
 
-    // 🟢 接收 recoveredKW 参数
+    // 🟢 接收 recoveredKW 参数, tSupply 用于判断是蒸汽还是热水
     const { topology, tSource, tSupply, tDisplaySource, recoveredKW } = params;
     
     const srcTempVal = tDisplaySource !== undefined ? tDisplaySource : tSource;
+    const isSteam = (tSupply >= 100); // 简单判据：大于100度视为蒸汽工况
 
     const cPipe = "#cbd5e1"; 
     const cHot = "#ef4444";  
@@ -38,14 +39,17 @@ export function renderSystemDiagram(containerId, params) {
         </defs>
         
         <text x="20" y="30" class="text-[10px] font-bold fill-slate-400 font-mono tracking-widest">
-            PROCESS FLOW DIAGRAM (PFD) - ${topology === 'RECOVERY' ? 'SCHEME C (DEEP RECOVERY)' : (topology === 'PARALLEL' ? 'SCHEME A' : 'SCHEME B')}
+            PFD - ${topology === 'RECOVERY' ? 'SCHEME C (DEEP RECOVERY)' : (topology === 'PARALLEL' ? 'SCHEME A' : 'SCHEME B')}
         </text>
     `;
 
+    // 🟢 v7.9 Update: 动态显示 PLANT 类型 (Steam/Water)
     svg += `
         <rect x="480" y="60" width="80" height="140" rx="4" fill="#f1f5f9" stroke="#94a3b8" stroke-width="2"/>
         <text x="520" y="130" text-anchor="middle" class="text-sm font-bold fill-slate-600">PLANT</text>
-        <text x="520" y="145" text-anchor="middle" class="text-xs fill-slate-400">LOAD</text>
+        <text x="520" y="145" text-anchor="middle" class="text-[10px] fill-slate-400 tracking-wide font-bold">
+            ${isSteam ? '♨️ STEAM' : '💧 WATER'}
+        </text>
     `;
 
     if (topology === 'RECOVERY') {
@@ -57,33 +61,39 @@ export function renderSystemDiagram(containerId, params) {
             <text x="100" y="185" text-anchor="middle" class="text-[10px] fill-amber-500">Main Source</text>
         `;
 
+        // 排烟管路
         svg += `
             <path d="M 100 140 L 100 60" stroke="${cSmoke}" stroke-width="6" stroke-linecap="round"/>
             <text x="115" y="70" class="text-[10px] font-bold fill-slate-500">Exhaust</text>
             <text x="115" y="85" class="text-[10px] fill-slate-400">${srcTempVal}°C</text>
         `;
 
+        // 热泵单元
         svg += `
             <rect x="220" y="50" width="120" height="70" rx="4" fill="#ecfdf5" stroke="${cEco}" stroke-width="2"/>
             <text x="280" y="85" text-anchor="middle" class="text-xs font-bold fill-emerald-700">Rec. HP</text>
             <text x="280" y="100" text-anchor="middle" class="text-[10px] fill-emerald-500">Heat Recovery</text>
         `;
 
+        // 连接管路
         svg += `<path d="M 100 100 L 220 100" stroke="${cSmoke}" stroke-width="2" stroke-dasharray="4" marker-end="url(#arrow-smoke)"/>`;
         
+        // 回收热量注入管路 (动画)
         svg += `<path d="M 280 120 L 280 170 L 200 170" stroke="${cEco}" stroke-width="3" marker-end="url(#arrow-eco)">
                     <animate attributeName="stroke-dasharray" from="0,20" to="20,0" dur="1s" repeatCount="indefinite" />
                 </path>`;
         
+        // 主供热管路
         svg += `<path d="M 150 170 L 480 170" stroke="${cHot}" stroke-width="3" marker-end="url(#arrow-hot)"/>`;
 
+        // 节点连接点
         svg += `
             <circle cx="280" cy="170" r="12" fill="white" stroke="${cEco}" stroke-width="2"/>
             <text x="280" y="174" text-anchor="middle" class="text-[10px] font-bold fill-emerald-600">+</text>
         `;
 
         // --- 🟢 能量增益气泡 (Energy Bubble) ---
-        // 只有当计算后传入了 recoveredKW 且大于0时才显示
+        // 核心视觉反馈：显示回收了多少 kW
         if (recoveredKW && recoveredKW > 0) {
             svg += `
                 <g transform="translate(280, 30)">
@@ -98,7 +108,7 @@ export function renderSystemDiagram(containerId, params) {
         }
 
     } else {
-        // === 方案 A/B ===
+        // === 方案 A/B (保持不变) ===
         svg += `
             <g transform="translate(0, 40)">
                 <rect x="180" y="140" width="100" height="50" rx="4" fill="white" stroke="${cGas}" stroke-width="2" stroke-dasharray="4"/>
@@ -150,6 +160,7 @@ export function renderSystemDiagram(containerId, params) {
     const labelY = topology === 'RECOVERY' ? 160 : 75;
     const labelX = topology === 'RECOVERY' ? 400 : 360;
     
+    // 显示供水温度标签
     svg += `
         <rect x="${labelX}" y="${labelY}" width="40" height="20" rx="2" fill="white" stroke="#e2e8f0"/>
         <text x="${labelX + 20}" y="${labelY + 14}" text-anchor="middle" class="text-[10px] font-mono fill-slate-600 font-bold">${tSupply}°C</text>
