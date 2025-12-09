@@ -1,4 +1,4 @@
-// src/main.js - v6.4 Dashboard Controller
+// src/main.js - v6.4.2 Unit Conversion Fix
 
 import './style.css'
 import { 
@@ -29,7 +29,7 @@ const dom = {
     boxSteamInfo: document.getElementById('steam-info-box'),
     resSatTemp: document.getElementById('res-sat-temp'),
     inpLoad: document.getElementById('input-load'),
-    inpAnnualHours: document.getElementById('input-annual-hours'), // [v6.4 New] 年运行小时
+    inpAnnualHours: document.getElementById('input-annual-hours'),
     
     // 经济参数
     selFuel: document.getElementById('select-fuel'),
@@ -45,7 +45,7 @@ const dom = {
     chkManualCop: document.getElementById('chk-manual-cop'),
     inpManualCop: document.getElementById('inp-manual-cop'),
     
-    // 物性与效率 (动态单位)
+    // 物性与效率
     inpFuelCal: document.getElementById('inp-fuel-cal'),
     selUnitCal: document.getElementById('sel-unit-cal'), 
     
@@ -54,16 +54,17 @@ const dom = {
     
     inpFuelEff: document.getElementById('inp-fuel-eff'),
     
-    // [v6.4] 结果仪表盘 (Dashboard Results)
+    // 结果仪表盘
     btnCalc: document.getElementById('btn-calculate'),
     resCop: document.getElementById('res-cop'),
-    resLift: document.getElementById('res-lift'),        // New
-    resPratio: document.getElementById('res-pratio'),    // New
-    resCo2Red: document.getElementById('res-co2-red'),   // New
+    resLift: document.getElementById('res-lift'),
+    resPratio: document.getElementById('res-pratio'),
+    resCo2Red: document.getElementById('res-co2-red'),
     
     resCost: document.getElementById('res-cost'),
-    resUnitCost: document.getElementById('res-unit-cost'), // New
-    resAnnualSave: document.getElementById('res-annual-save'), // New
+    resUnitCost: document.getElementById('res-unit-cost'),
+    resAnnualSave: document.getElementById('res-annual-save'),
+    resPayback: document.getElementById('res-payback'),
     
     log: document.getElementById('system-log')
 };
@@ -82,7 +83,7 @@ function log(msg, type = 'info') {
 
 // --- 3. 核心交互逻辑 ---
 
-// A. 动态生成单位选项 (Smart Unit Generator)
+// A. 动态生成单位选项
 function updateUnitOptions(fuelKey) {
     const db = FuelDatabase[fuelKey];
     const baseUnit = db.unit; // m³, kg, t, L
@@ -92,11 +93,10 @@ function updateUnitOptions(fuelKey) {
         { val: 'kWh', txt: `kWh/${baseUnit}` },
         { val: 'MJ',  txt: `MJ/${baseUnit}` },
         { val: 'kcal', txt: `kcal/${baseUnit}` },
-        { val: 'GJ',  txt: `GJ/${baseUnit}` } // 适合蒸汽
+        { val: 'GJ',  txt: `GJ/${baseUnit}` }
     ];
-    
     dom.selUnitCal.innerHTML = calOpts.map(o => `<option value="${o.val}">${o.txt}</option>`).join('');
-    dom.selUnitCal.value = 'kWh'; // 默认基准
+    dom.selUnitCal.value = 'kWh';
 
     // 2. 碳因子单位 (CO2 Factor)
     const co2Opts = [
@@ -113,55 +113,66 @@ dom.selFuel.addEventListener('change', (e) => {
     const key = e.target.value;
     const db = FuelDatabase[key];
     
-    // 1. 基础 UI
     dom.lblFuelUnit.innerText = `/${db.unit}`;
     
-    // 2. 价格建议
     const priceMap = { 'NATURAL_GAS': 3.8, 'COAL': 1.2, 'DIESEL': 7.5, 'BIOMASS': 1.0, 'STEAM_PIPE': 220, 'ELECTRICITY': 0.75 };
     dom.inpFuelPrice.value = priceMap[key] || 1.0;
     
-    // 3. 重建单位下拉框
     updateUnitOptions(key);
     
-    // 4. 自动填充默认物性
+    // 自动填充默认物性
     dom.inpFuelCal.value = db.calorificValue; 
     dom.inpFuelCo2.value = db.co2Factor;
     dom.inpFuelEff.value = db.efficiency;
     
-    log(`CFG: 燃料切换至 [${db.name}] (单位基准: /${db.unit})`);
+    // 重置单位记忆变量
+    prevCalUnit = 'kWh';
+    prevCo2Unit = 'kg/kWh';
+    
+    log(`CFG: 燃料切换至 [${db.name}]`);
 });
 
-// C. 单位换算监听 (实时计算)
-// 当用户改变单位下拉框时，输入框数值自动变，保持物理量不变
+// C. 热值单位换算 (分子变换: * Factor)
 let prevCalUnit = 'kWh';
 dom.selUnitCal.addEventListener('focus', () => { prevCalUnit = dom.selUnitCal.value; });
 dom.selUnitCal.addEventListener('change', () => {
     const val = parseFloat(dom.inpFuelCal.value);
+    if (isNaN(val)) return;
+
     const fromFactor = UNIT_CONVERTERS[prevCalUnit] || 1.0;
     const toFactor = UNIT_CONVERTERS[dom.selUnitCal.value] || 1.0;
     
-    // 算法: Val(kWh) = Val(old) / Factor(old)
-    // Val(new) = Val(kWh) * Factor(new)
-    const newVal = (val / fromFactor) * toFactor;
-    dom.inpFuelCal.value = parseFloat(newVal.toPrecision(5));
+    // kWh -> MJ: 10 * (3.6/1) = 36
+    const newVal = val * (toFactor / fromFactor);
+    dom.inpFuelCal.value = parseFloat(newVal.toPrecision(6));
     prevCalUnit = dom.selUnitCal.value;
 });
 
-// 监听碳排单位换算
+// D. [Fix] 碳因子单位换算 (分母变换: / Factor)
 let prevCo2Unit = 'kg/kWh';
 dom.selUnitCo2.addEventListener('focus', () => { prevCo2Unit = dom.selUnitCo2.value; });
 dom.selUnitCo2.addEventListener('change', () => {
     const val = parseFloat(dom.inpFuelCo2.value);
-    // 注意: 碳因子的换算逻辑与热值相反 (分母不同)
-    // 但为了简化，logic.js 里的 normalizeCo2Factor 假设输入是 kg/Unit
-    // 这里仅做简单的数值缩放演示，实际建议用户重置默认值
-    // 这里我们简单重置为默认值以避免逻辑死循环
-    const db = FuelDatabase[dom.selFuel.value];
-    if(dom.selUnitCo2.value === 'kg/kWh') dom.inpFuelCo2.value = db.co2Factor;
+    if (isNaN(val)) return;
+
+    // 提取基准单位 (去掉 'kg/')
+    const fromBase = prevCo2Unit.split('/')[1];
+    const toBase = dom.selUnitCo2.value.split('/')[1];
+    
+    const fromFactor = UNIT_CONVERTERS[fromBase] || 1.0;
+    const toFactor = UNIT_CONVERTERS[toBase] || 1.0;
+    
+    // kg/kWh -> kg/MJ: 0.2 * (1 / 3.6) = 0.055
+    // 公式：OldVal * (FactorOld / FactorNew)
+    const newVal = val * (fromFactor / toFactor);
+    
+    dom.inpFuelCo2.value = parseFloat(newVal.toPrecision(6));
     prevCo2Unit = dom.selUnitCo2.value;
+    
+    log(`UNIT: 碳因子单位 ${prevCo2Unit} -> ${dom.selUnitCo2.value}`);
 });
 
-// D. 拓扑与介质切换
+// E. 拓扑与介质切换
 dom.topo.addEventListener('change', (e) => {
     const isWaste = (e.target.value === 'COUPLED');
     dom.lblSource.innerText = isWaste ? "工业余热/废热温度" : "室外干球温度";
@@ -201,7 +212,6 @@ function updateSatTempPreview() {
     dom.resSatTemp.innerText = `${t} °C`;
 }
 
-// E. 高级选项辅助
 dom.selPerfection.addEventListener('change', (e) => {
     e.target.value === 'CUSTOM' ? dom.boxPerfCustom.classList.remove('hidden') : dom.boxPerfCustom.classList.add('hidden');
 });
@@ -210,21 +220,19 @@ dom.chkManualCop.addEventListener('change', (e) => {
     e.target.checked ? dom.inpManualCop.classList.replace('bg-slate-100','bg-white') : dom.inpManualCop.classList.replace('bg-white','bg-slate-100');
 });
 
-// --- 4. 核心计算 (Dashboard Trigger) ---
+// --- 4. 核心计算 ---
 dom.btnCalc.addEventListener('click', () => {
     const topo = dom.topo.value;
     const mode = dom.inpMode.value;
     const srcT = parseFloat(dom.inpSource.value);
     const tgtVal = parseFloat(dom.inpTarget.value);
     
-    // 高级参数
     let perfDegree = (dom.selPerfection.value === 'CUSTOM') ? parseFloat(dom.inpPerfCustom.value) : parseFloat(dom.selPerfection.value);
     const isManualCop = dom.chkManualCop.checked;
     const manualCopVal = isManualCop ? parseFloat(dom.inpManualCop.value) : 0;
     
     log(`RUN: 仿真启动...`);
 
-    // 1. 物理计算
     const cycle = calculateProcessCycle({ 
         mode, sourceTemp: srcT, targetVal: tgtVal, perfectionDegree: perfDegree 
     });
@@ -235,13 +243,8 @@ dom.btnCalc.addEventListener('click', () => {
         return;
     }
 
-    // 2. 经济计算
     const strat = calculateHybridStrategy({
         loadKW: parseFloat(dom.inpLoad.value),
-        
-        // [v6.4 New] 传递年运行时间
-        annualHours: parseFloat(dom.inpAnnualHours.value),
-
         cop: cycle.cop,
         manualCop: manualCopVal,
         elecPrice: parseFloat(dom.inpElecPrice.value),
@@ -253,37 +256,39 @@ dom.btnCalc.addEventListener('click', () => {
         calUnit: dom.selUnitCal.value,
         customCo2: parseFloat(dom.inpFuelCo2.value),
         co2Unit: dom.selUnitCo2.value,
-        customEfficiency: parseFloat(dom.inpFuelEff.value)
+        customEfficiency: parseFloat(dom.inpFuelEff.value),
+        
+        annualHours: parseFloat(dom.inpAnnualHours.value)
     });
 
-    // 3. 更新仪表盘 (Dashboard)
+    // Update Dashboard
     const displayCop = (isManualCop && manualCopVal > 0) ? manualCopVal : cycle.cop;
     
-    // A. Technical
     dom.resCop.innerText = displayCop;
     dom.resLift.innerText = cycle.lift.toFixed(1);
     dom.resPratio.innerText = cycle.pRatio.toFixed(1);
     dom.resCo2Red.innerText = strat.co2Reduction.toFixed(1);
     
-    // B. Economic
     dom.resCost.innerText = strat.cost.toFixed(1);
-    dom.resUnitCost.innerText = strat.unitCost.toFixed(3); // 0.xxx 元/kWh
+    dom.resUnitCost.innerText = strat.unitCost.toFixed(3);
     
-    // 年节省额: 格式化显示
     const annual = strat.annualSaving;
-    // 如果大于 10000，显示为 "x.x 万"
     dom.resAnnualSave.innerText = annual > 10000 ? `${(annual/10000).toFixed(1)}万` : annual.toFixed(0);
     
-    // 4. 图表与图示
+    if (strat.paybackPeriod > 0 && strat.paybackPeriod < 20) {
+        dom.resPayback.innerText = strat.paybackPeriod;
+    } else {
+        dom.resPayback.innerText = "--";
+    }
+    
     updateChart(topo, mode, srcT, tgtVal, perfDegree);
     updateDiagram();
     
-    // 5. 结论
     if (strat.hpRatio === 100) {
         log(`✅ [推荐] ${strat.mode}`, 'eco');
-        log(`📊 综合热价: ¥${strat.unitCost.toFixed(3)}/kWh | 年节省: ¥${dom.resAnnualSave.innerText}`, 'info');
+        log(`📊 静态回收期: ${strat.paybackPeriod > 0 ? strat.paybackPeriod + '年' : 'N/A'}`, 'info');
     } else {
-        log(`⚠️ [推荐] ${strat.mode} (热泵不具备经济性)`, 'warn');
+        log(`⚠️ [推荐] ${strat.mode}`, 'warn');
     }
 });
 
@@ -295,7 +300,7 @@ function updateDiagram() {
     });
 }
 
-// --- 初始化序列 ---
+// Init
 setTargetMode('WATER');
-dom.selFuel.dispatchEvent(new Event('change')); // 触发初始化单位生成
+dom.selFuel.dispatchEvent(new Event('change'));
 updateDiagram();
