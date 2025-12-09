@@ -1,4 +1,4 @@
-// src/logic.js - v7.4 Stable Kernel
+// src/logic.js - v7.8 Dynamic Perfection
 
 export const SYSTEM_CONFIG = {
     wasteHeatTemp: 35.0, 
@@ -93,19 +93,23 @@ export function calculateProcessCycle(params) {
     }
 }
 
-// 烟气回收算法 (Fixed)
+// 🔴 修复函数：calculateFlueGasRecovery
 export function calculateFlueGasRecovery(params) {
     const { 
         loadKW, boilerEff, fuelType, 
         tExhaustIn, tExhaustOut, 
-        recoveryType, targetWaterTemp
+        recoveryType, targetWaterTemp,
+        perfectionDegree // 🟢 新增参数接收
     } = params;
+    
+    // 🟢 确保有默认值
+    const eta = perfectionDegree || 0.45;
 
     const dbFuel = FuelDatabase[fuelType] || FuelDatabase['NATURAL_GAS'];
     const boilerInputKW = loadKW / boilerEff; 
     const flueGasVol = boilerInputKW * dbFuel.flueGasFactor; 
     
-    // 显热 (Corrected Unit)
+    // 显热
     const Cp_flue_kWh = 0.00038; 
     const sensibleHeatKW = flueGasVol * Cp_flue_kWh * (tExhaustIn - tExhaustOut);
 
@@ -127,21 +131,31 @@ export function calculateFlueGasRecovery(params) {
 
     const sourceHeatKW = sensibleHeatKW + latentHeatKW;
 
-    // 热泵
+    // 热泵 COP 计算
     let cop = 0;
     let driveEnergyKW = 0; 
     let outputHeatKW = 0;  
 
     if (recoveryType === 'ELECTRIC_HP') {
-        const tEvap = (tExhaustIn + tExhaustOut) / 2 - 10; 
-        const tCond = targetWaterTemp + 5;
-        const tk_evap = tEvap + 273.15;
-        const tk_cond = tCond + 273.15;
-        let cop_carnot = tk_cond / (tk_cond - tk_evap);
-        if (cop_carnot > 15) cop_carnot = 15; 
-        cop = cop_carnot * 0.45; 
-        if (cop < 2) cop = 2; if (cop > 6) cop = 6;
+        const tEvap = tExhaustOut + 8.0; 
+        const tCond = targetWaterTemp + 5.0;
         
+        if (tEvap >= tCond - 2) {
+             cop = 20.0; 
+        } else {
+            const tk_evap = tEvap + 273.15;
+            const tk_cond = tCond + 273.15;
+            let cop_carnot = tk_cond / (tk_cond - tk_evap);
+            
+            if (cop_carnot > 15) cop_carnot = 15; // 限制保持 15
+            
+            // 🔴 修复点：使用传入的 eta，而不是写死 0.45
+            cop = cop_carnot * eta; 
+            
+            if (cop < 2.5) cop = 2.5; 
+            if (cop > 8.0) cop = 8.0;
+        }
+
         driveEnergyKW = sourceHeatKW / (cop - 1);
         outputHeatKW = sourceHeatKW + driveEnergyKW;
     } else {
@@ -154,19 +168,20 @@ export function calculateFlueGasRecovery(params) {
         recoveredHeat: outputHeatKW, 
         driveEnergy: driveEnergyKW,  
         cop: parseFloat(cop.toFixed(2)),
-        waterRecovery: parseFloat((waterRecovery_kg_h / 1000).toFixed(2)), // to Ton
+        waterRecovery: parseFloat((waterRecovery_kg_h / 1000).toFixed(2)), 
         exhaustOutActual: tExhaustOut
     };
 }
 
-// 混合策略 (Variable Typo Fixed)
+// 🔴 修复函数：calculateHybridStrategy
 export function calculateHybridStrategy(params) {
     const { 
         loadKW, topology, annualHours,
         elecPrice, fuelPrice, fuelTypeKey,
         customCalorific, calUnit, customCo2, co2Unit, customEfficiency,
         tExhaustIn, tExhaustOut, recoveryType, targetWaterTemp,
-        capexHP, capexBase, pefElec, cop, manualCop
+        capexHP, capexBase, pefElec, cop, manualCop,
+        perfectionDegree // 🟢 确保解构此参数
     } = params;
     
     const dbFuel = FuelDatabase[fuelTypeKey] || FuelDatabase['NATURAL_GAS'];
@@ -187,7 +202,8 @@ export function calculateHybridStrategy(params) {
         const recRes = calculateFlueGasRecovery({
             loadKW, boilerEff: activeEff, fuelType: fuelTypeKey,
             tExhaustIn, tExhaustOut, recoveryType, targetWaterTemp,
-            fuelCalVal: activeCalVal
+            fuelCalVal: activeCalVal,
+            perfectionDegree: perfectionDegree // 🟢 传递给 downstream
         });
 
         const savedFuelCost = (recRes.recoveredHeat / activeEff / activeCalVal) * fuelPrice;
@@ -214,7 +230,6 @@ export function calculateHybridStrategy(params) {
         const investHP = recRes.recoveredHeat * capexHP; 
         const payback = (annualSaving > 0) ? (investHP / annualSaving) : 99;
 
-        // [FIXED Variable Name]
         const netPrimaryInput = baselinePrimary - (recRes.recoveredHeat/activeEff * 1.05) + drivePrimary;
         const per = netPrimaryInput > 0 ? (loadKW / netPrimaryInput) : 0; 
 

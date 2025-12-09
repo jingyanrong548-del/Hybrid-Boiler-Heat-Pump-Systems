@@ -1,13 +1,13 @@
-// src/main.js - v7.4 Stable Fix Controller
+// src/main.js - v7.8 Parameter Sync
 
 import './style.css'
-import { 
-    calculateProcessCycle, 
-    calculateHybridStrategy, 
-    getSatTempFromPressure, 
-    SYSTEM_CONFIG, 
+import {
+    calculateProcessCycle,
+    calculateHybridStrategy,
+    getSatTempFromPressure,
+    SYSTEM_CONFIG,
     FuelDatabase,
-    UNIT_CONVERTERS 
+    UNIT_CONVERTERS
 } from './logic.js';
 import { updateChart } from './chartHelper.js';
 import { renderSystemDiagram } from './diagram.js';
@@ -19,11 +19,11 @@ const dom = {
     btnWater: document.getElementById('btn-mode-water'),
     btnSteam: document.getElementById('btn-mode-steam'),
     inpMode: document.getElementById('input-target-mode'),
-    
+
     // 面板
     panelStd: document.getElementById('panel-input-standard'),
     panelRec: document.getElementById('panel-input-recovery'),
-    
+
     // 输入
     lblSource: document.getElementById('label-source-temp'),
     inpSource: document.getElementById('input-temp-source'),
@@ -37,7 +37,7 @@ const dom = {
     resSatTemp: document.getElementById('res-sat-temp'),
     inpLoad: document.getElementById('input-load'),
     inpAnnualHours: document.getElementById('input-annual-hours'),
-    
+
     // 经济
     selFuel: document.getElementById('select-fuel'),
     inpElecPrice: document.getElementById('input-elec-price'),
@@ -45,7 +45,7 @@ const dom = {
     lblFuelUnit: document.getElementById('label-fuel-unit'),
     inpCapexHP: document.getElementById('inp-capex-hp'),
     inpCapexBase: document.getElementById('inp-capex-base'),
-    
+
     // 高级
     selPerfection: document.getElementById('sel-perfection'),
     boxPerfCustom: document.getElementById('box-perf-custom'),
@@ -53,27 +53,29 @@ const dom = {
     chkManualCop: document.getElementById('chk-manual-cop'),
     inpManualCop: document.getElementById('inp-manual-cop'),
     inpPefElec: document.getElementById('inp-pef-elec'),
-    
+
     inpFuelCal: document.getElementById('inp-fuel-cal'),
-    selUnitCal: document.getElementById('sel-unit-cal'), 
+    selUnitCal: document.getElementById('sel-unit-cal'),
     inpFuelCo2: document.getElementById('inp-fuel-co2'),
     selUnitCo2: document.getElementById('sel-unit-co2'),
     inpFuelEff: document.getElementById('inp-fuel-eff'),
-    
+
     // 结果
     btnCalc: document.getElementById('btn-calculate'),
+    lblRes1: document.getElementById('lbl-res-1'),
+    descRes1: document.getElementById('desc-res-1'),
     lblRes2: document.getElementById('lbl-res-2'),
     unitRes2: document.getElementById('unit-res-2'),
     lblRes3: document.getElementById('lbl-res-3'),
     descRes3: document.getElementById('desc-res-3'),
     resCop: document.getElementById('res-cop'),
-    resLift: document.getElementById('res-lift'),      
-    resPratio: document.getElementById('res-pratio'), // 可能为空
+    resLift: document.getElementById('res-lift'),
+    resPratio: document.getElementById('res-pratio'),
     resPer: document.getElementById('res-per'),
-    resCo2Red: document.getElementById('res-co2-red'),   
+    resCo2Red: document.getElementById('res-co2-red'),
     resCost: document.getElementById('res-cost'),
-    resUnitCost: document.getElementById('res-unit-cost'), 
-    resAnnualSave: document.getElementById('res-annual-save'), 
+    resUnitCost: document.getElementById('res-unit-cost'),
+    resAnnualSave: document.getElementById('res-annual-save'),
     resPayback: document.getElementById('res-payback'),
     log: document.getElementById('system-log')
 };
@@ -92,18 +94,18 @@ function log(msg, type = 'info') {
 
 function updateUnitOptions(fuelKey) {
     const db = FuelDatabase[fuelKey];
-    const baseUnit = db.unit; 
+    const baseUnit = db.unit;
     const calOpts = [
         { val: 'kWh', txt: `kWh/${baseUnit}` },
-        { val: 'MJ',  txt: `MJ/${baseUnit}` },
+        { val: 'MJ', txt: `MJ/${baseUnit}` },
         { val: 'kcal', txt: `kcal/${baseUnit}` },
-        { val: 'GJ',  txt: `GJ/${baseUnit}` }
+        { val: 'GJ', txt: `GJ/${baseUnit}` }
     ];
     dom.selUnitCal.innerHTML = calOpts.map(o => `<option value="${o.val}">${o.txt}</option>`).join('');
     dom.selUnitCal.value = 'kWh';
     const co2Opts = [
         { val: 'kg/kWh', txt: `kg/kWh` },
-        { val: 'kg/MJ',  txt: `kg/MJ` },
+        { val: 'kg/MJ', txt: `kg/MJ` },
         { val: 'kg/kcal', txt: `kg/kcal` }
     ];
     dom.selUnitCo2.innerHTML = co2Opts.map(o => `<option value="${o.val}">${o.txt}</option>`).join('');
@@ -119,7 +121,7 @@ dom.selFuel.addEventListener('change', (e) => {
     const capexMap = { 'NATURAL_GAS': 200, 'COAL': 400, 'ELECTRICITY': 150, 'BIOMASS': 500, 'STEAM_PIPE': 50, 'DIESEL': 250 };
     dom.inpCapexBase.value = capexMap[key] || 200;
     updateUnitOptions(key);
-    dom.inpFuelCal.value = db.calorificValue; 
+    dom.inpFuelCal.value = db.calorificValue;
     dom.inpFuelCo2.value = db.co2Factor;
     dom.inpFuelEff.value = db.efficiency;
     prevCalUnit = 'kWh'; prevCo2Unit = 'kg/kWh';
@@ -155,17 +157,21 @@ dom.topo.addEventListener('change', (e) => {
     if (topo === 'RECOVERY') {
         dom.panelStd.classList.add('hidden');
         dom.panelRec.classList.remove('hidden');
+        dom.lblRes1.innerText = "余热热泵 COP";
+        dom.descRes1.innerText = "Recovery HP Only";
         dom.lblRes2.innerText = "冷凝水回收 (Water)";
         dom.unitRes2.innerText = "t/h";
         dom.lblRes3.innerText = "系统综合效率";
-        dom.descRes3.innerText = "System + HP";
+        dom.descRes3.innerText = "Boiler + Recovery";
     } else {
         dom.panelStd.classList.remove('hidden');
         dom.panelRec.classList.add('hidden');
+        dom.lblRes1.innerText = "系统 COP";
+        dom.descRes1.innerText = "Performance";
         dom.lblRes2.innerText = "系统温升 (Lift)";
         dom.unitRes2.innerText = "K";
-        dom.lblRes3.innerText = "压缩比 (P.Ratio)";
-        dom.descRes3.innerText = "Est. Ratio";
+        dom.lblRes3.innerText = "一次能源利用率 (PER)";
+        dom.descRes3.innerText = "Efficiency";
         if (topo === 'COUPLED') {
             dom.lblSource.innerText = "工业余热/废热温度";
             dom.inpSource.value = SYSTEM_CONFIG.wasteHeatTemp;
@@ -212,7 +218,7 @@ dom.selPerfection.addEventListener('change', (e) => {
 });
 dom.chkManualCop.addEventListener('change', (e) => {
     dom.inpManualCop.disabled = !e.target.checked;
-    e.target.checked ? dom.inpManualCop.classList.replace('bg-slate-100','bg-white') : dom.inpManualCop.classList.replace('bg-white','bg-slate-100');
+    e.target.checked ? dom.inpManualCop.classList.replace('bg-slate-100', 'bg-white') : dom.inpManualCop.classList.replace('bg-white', 'bg-slate-100');
 });
 
 dom.btnCalc.addEventListener('click', () => {
@@ -220,17 +226,17 @@ dom.btnCalc.addEventListener('click', () => {
     const mode = dom.inpMode.value;
     const srcT = parseFloat(dom.inpSource.value);
     const tgtVal = parseFloat(dom.inpTarget.value);
-    
+
     let perfDegree = (dom.selPerfection.value === 'CUSTOM') ? parseFloat(dom.inpPerfCustom.value) : parseFloat(dom.selPerfection.value);
     const isManualCop = dom.chkManualCop.checked;
     const manualCopVal = isManualCop ? parseFloat(dom.inpManualCop.value) : 0;
-    
+
     log(`RUN: 仿真启动... [Topo: ${topo}]`);
 
-    const cycle = calculateProcessCycle({ 
-        mode, sourceTemp: srcT, targetVal: tgtVal, perfectionDegree: perfDegree 
+    const cycle = calculateProcessCycle({
+        mode, sourceTemp: srcT, targetVal: tgtVal, perfectionDegree: perfDegree
     });
-    
+
     if (cycle.error) {
         log(cycle.error, 'error');
         dom.resCop.innerText = "Err";
@@ -257,52 +263,101 @@ dom.btnCalc.addEventListener('click', () => {
         targetWaterTemp: (mode === 'STEAM' ? getSatTempFromPressure(tgtVal) : tgtVal),
         capexHP: parseFloat(dom.inpCapexHP.value),
         capexBase: parseFloat(dom.inpCapexBase.value),
-        pefElec: parseFloat(dom.inpPefElec.value)
+        pefElec: parseFloat(dom.inpPefElec.value),
+
+        // 🟢 修复：显式传递用户设置的完善度
+        perfectionDegree: perfDegree
     });
 
-    const displayCop = (isManualCop && manualCopVal > 0) ? manualCopVal : cycle.cop;
+    let displayCop = 0;
+    if (isManualCop && manualCopVal > 0) {
+        displayCop = manualCopVal;
+    } else if (topo === 'RECOVERY') {
+        displayCop = strat.activeCop;
+    } else {
+        displayCop = cycle.cop;
+    }
     dom.resCop.innerText = displayCop;
     dom.resCo2Red.innerText = strat.co2Reduction.toFixed(1);
-    dom.resPer.innerText = (strat.per > 0 && strat.per < 100) ? strat.per : "--";
-    
+
+    let res3Value = (strat.per > 0 && strat.per < 100) ? strat.per : "--";
+    let recoveredKW = 0;
+
     if (topo === 'RECOVERY') {
-        dom.resLift.innerText = strat.waterRecovery > 0 ? strat.waterRecovery.toFixed(2) : "0.0"; 
-        // 使用 res-pratio 占位符显示综合效率，或者忽略
-        if (dom.resPratio) {
-            dom.resPratio.innerText = (strat.hpRatio > 0) ? ((parseFloat(dom.inpFuelEff.value) * (1 + strat.hpRatio/100)).toFixed(2)) : dom.inpFuelEff.value;
-        }
+        dom.resLift.innerText = strat.waterRecovery > 0 ? strat.waterRecovery.toFixed(2) : "0.0";
+
+        const baseEff = parseFloat(dom.inpFuelEff.value);
+        const hpRatio = strat.hpRatio;
+        const sysEff = baseEff * (1 + hpRatio / 100);
+
+        dom.resPer.innerHTML = `
+            <span class="text-slate-400 text-sm">${baseEff.toFixed(2)}</span>
+            <span class="text-slate-300 mx-1">➔</span>
+            <span class="text-xl text-violet-600 font-bold">${sysEff.toFixed(2)}</span>
+        `;
+
+        // --- 🟢 新增：智能提示逻辑 (Tooltip Logic) ---
+        const isAbs = (dom.selRecType.value === 'ABSORPTION_HP');
+
+        // 根据设备类型，动态生成解释文案
+        const hintText = isAbs
+            ? "💡 能量守恒：吸收式热泵消耗的驱动热量（蒸汽/燃气）在做功后并未消失，而是全部进入了供水系统，相当于'第二热源'，因此总热增益显著。"
+            : "⚡️ 搬运机制：电动热泵仅消耗少量高品位电能来搬运低品位余热，系统增量主要纯来自于回收的余热本身。";
+
+        // 使用 Tailwind 的 group 和 group-hover 实现悬浮提示
+        dom.descRes3.innerHTML = `
+            <div class="group relative flex items-center cursor-help">
+                <span class="text-emerald-500 font-bold">Boost: +${(hpRatio * 1).toFixed(1)}%</span>
+                <div class="ml-1 w-3 h-3 rounded-full border border-slate-400 text-slate-400 text-[8px] flex items-center justify-center">?</div>
+                <span class="text-slate-400 text-[9px] ml-1">| PER:${strat.per}</span>
+                
+                <div class="hidden group-hover:block absolute bottom-full left-0 mb-2 w-56 bg-slate-800 text-white text-[10px] p-2.5 rounded shadow-xl z-50 font-normal leading-relaxed border border-slate-600 pointer-events-none">
+                    ${hintText}
+                    <div class="absolute top-full left-4 -mt-1 border-4 border-transparent border-t-slate-800"></div>
+                </div>
+            </div>
+        `;
+
+        recoveredKW = parseFloat(dom.inpLoad.value) * (hpRatio / 100);
+
     } else {
         dom.resLift.innerText = cycle.lift.toFixed(1);
         if (dom.resPratio) dom.resPratio.innerText = cycle.pRatio.toFixed(1);
+        dom.descRes3.innerText = "Efficiency";
+        dom.resPer.innerText = res3Value;
     }
-    
+
     dom.resCost.innerText = strat.cost.toFixed(1);
     dom.resUnitCost.innerText = strat.unitCost.toFixed(3);
-    
+
     const annual = strat.annualSaving;
-    dom.resAnnualSave.innerText = annual > 10000 ? `${(annual/10000).toFixed(1)}万` : annual.toFixed(0);
-    
+    dom.resAnnualSave.innerText = annual > 10000 ? `${(annual / 10000).toFixed(1)}万` : annual.toFixed(0);
+
     if (strat.paybackPeriod > 0 && strat.paybackPeriod < 20) {
         dom.resPayback.innerText = strat.paybackPeriod;
     } else {
         dom.resPayback.innerText = "--";
     }
-    
-    updateChart(topo, mode, srcT, tgtVal, perfDegree);
-    updateDiagram();
-    
-    if (strat.hpRatio > 0) { 
+
+    // 传递完善度和热泵类型给图表
+    updateChart(topo, mode, srcT, tgtVal, perfDegree, dom.selRecType.value);
+
+    // 传递回收热量给拓扑图
+    updateDiagram(recoveredKW);
+
+    if (strat.hpRatio > 0) {
         log(`✅ [结果] ${strat.mode}`, 'eco');
-        log(`📊 ROI: ${strat.paybackPeriod}年 | PER: ${strat.per}`, 'info');
+        log(`📊 ROI: ${strat.paybackPeriod}年 | Boost: +${strat.hpRatio}%`, 'info');
     }
 });
 
-function updateDiagram() {
+function updateDiagram(recoveredKW = 0) {
     renderSystemDiagram('diagram-container', {
         topology: dom.topo.value,
         tSource: parseFloat(dom.inpSource.value),
         tDisplaySource: dom.topo.value === 'RECOVERY' ? parseFloat(dom.inpFlueIn.value) : parseFloat(dom.inpSource.value),
-        tSupply: dom.inpMode.value === 'STEAM' ? getSatTempFromPressure(parseFloat(dom.inpTarget.value)) : parseFloat(dom.inpTarget.value)
+        tSupply: dom.inpMode.value === 'STEAM' ? getSatTempFromPressure(parseFloat(dom.inpTarget.value)) : parseFloat(dom.inpTarget.value),
+        recoveredKW: recoveredKW
     });
 }
 
