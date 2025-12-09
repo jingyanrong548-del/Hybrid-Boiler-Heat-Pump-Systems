@@ -1,10 +1,11 @@
-// src/main.js - v7.9 Steam Enhanced (UI Control & Wiring)
+// src/main.js - v8.1 Fixed (Pass Mode to Logic)
 
 import './style.css'
 import {
     calculateProcessCycle,
     calculateHybridStrategy,
     getSatTempFromPressure,
+    convertSteamTonsToKW,
     SYSTEM_CONFIG,
     FuelDatabase,
     UNIT_CONVERTERS
@@ -14,61 +15,53 @@ import { renderSystemDiagram } from './diagram.js';
 
 // --- 1. DOM 元素获取 ---
 const dom = {
-    // 基础控制
     topo: document.getElementById('select-topology'),
     btnWater: document.getElementById('btn-mode-water'),
     btnSteam: document.getElementById('btn-mode-steam'),
     inpMode: document.getElementById('input-target-mode'),
-
-    // 面板
     panelStd: document.getElementById('panel-input-standard'),
     panelRec: document.getElementById('panel-input-recovery'),
-
-    // v7.9 新增控件
-    boxSteamStrat: document.getElementById('box-steam-strategy'),
+    lblLoadIn: document.getElementById('label-load-in'),
+    inpLoadIn: document.getElementById('input-load-in'),
+    lblLoadOut: document.getElementById('label-load-out'),
+    inpLoadOut: document.getElementById('input-load-out'),
+    boxSteamStrat: document.getElementById('box-steam-strategy'), 
     selSteamStrat: document.getElementById('select-steam-strategy'),
-    boxFeedParams: document.getElementById('box-feed-params'),
-    inpTempFeed: document.getElementById('input-temp-feed'),
-    divTempPre: document.getElementById('div-temp-pre'),
-    inpTempPre: document.getElementById('input-temp-pre'),
-
-    // 输入
+    selRecType: document.getElementById('select-recovery-type'),
+    selLoadUnit: document.getElementById('select-load-unit'),
+    inpLoad: document.getElementById('input-load'),
+    inpLoadTon: document.getElementById('input-load-ton'),
+    unitLoadDisplay: document.getElementById('unit-load-display'),
+    infoLoadConv: document.getElementById('info-load-converted'),
+    valLoadConv: document.getElementById('val-load-converted'),
     lblSource: document.getElementById('label-source-temp'),
     inpSource: document.getElementById('input-temp-source'),
     inpFlueIn: document.getElementById('input-flue-temp-in'),
     inpFlueOut: document.getElementById('input-flue-temp-out'),
-    selRecType: document.getElementById('select-recovery-type'),
+    boxTargetStd: document.getElementById('box-target-std'), 
     lblTarget: document.getElementById('label-target-val'),
     inpTarget: document.getElementById('input-target-val'),
     unitTarget: document.getElementById('unit-target-val'),
     boxSteamInfo: document.getElementById('steam-info-box'),
     resSatTemp: document.getElementById('res-sat-temp'),
-    inpLoad: document.getElementById('input-load'),
     inpAnnualHours: document.getElementById('input-annual-hours'),
-
-    // 经济
     selFuel: document.getElementById('select-fuel'),
     inpElecPrice: document.getElementById('input-elec-price'),
     inpFuelPrice: document.getElementById('input-fuel-price'),
     lblFuelUnit: document.getElementById('label-fuel-unit'),
     inpCapexHP: document.getElementById('inp-capex-hp'),
     inpCapexBase: document.getElementById('inp-capex-base'),
-
-    // 高级
     selPerfection: document.getElementById('sel-perfection'),
     boxPerfCustom: document.getElementById('box-perf-custom'),
     inpPerfCustom: document.getElementById('inp-perfection-custom'),
     chkManualCop: document.getElementById('chk-manual-cop'),
     inpManualCop: document.getElementById('inp-manual-cop'),
     inpPefElec: document.getElementById('inp-pef-elec'),
-
     inpFuelCal: document.getElementById('inp-fuel-cal'),
     selUnitCal: document.getElementById('sel-unit-cal'),
     inpFuelCo2: document.getElementById('inp-fuel-co2'),
     selUnitCo2: document.getElementById('sel-unit-co2'),
     inpFuelEff: document.getElementById('inp-fuel-eff'),
-
-    // 结果
     btnCalc: document.getElementById('btn-calculate'),
     lblRes1: document.getElementById('lbl-res-1'),
     descRes1: document.getElementById('desc-res-1'),
@@ -85,8 +78,21 @@ const dom = {
     resUnitCost: document.getElementById('res-unit-cost'),
     resAnnualSave: document.getElementById('res-annual-save'),
     resPayback: document.getElementById('res-payback'),
-    log: document.getElementById('system-log')
+    log: document.getElementById('system-log'),
+    btnGenReq: document.getElementById('btn-gen-req'),
+    modalReq: document.getElementById('modal-requisition'),
+    btnCloseModal: document.getElementById('btn-close-modal'),
+    btnCopyReq: document.getElementById('btn-copy-req'),
+    reqSourceType: document.getElementById('req-source-type'),
+    reqSourceIn: document.getElementById('req-source-in'),
+    reqSourceOut: document.getElementById('req-source-out'),
+    reqLoadType: document.getElementById('req-load-type'),
+    reqLoadIn: document.getElementById('req-load-in'),
+    reqLoadOut: document.getElementById('req-load-out'),
+    reqCapacity: document.getElementById('req-capacity')
 };
+
+let currentResultStrategy = null; 
 
 function log(msg, type = 'info') {
     const time = new Date().toLocaleTimeString('en-GB');
@@ -99,8 +105,6 @@ function log(msg, type = 'info') {
         dom.log.scrollTop = dom.log.scrollHeight;
     }
 }
-
-// --- 配置联动 ---
 
 function updateUnitOptions(fuelKey) {
     const db = FuelDatabase[fuelKey];
@@ -162,69 +166,91 @@ dom.selUnitCo2.addEventListener('change', () => {
     prevCo2Unit = dom.selUnitCo2.value;
 });
 
-// 🟢 v7.9 新增: 控制蒸汽策略面板的显隐
-function updateSteamUI() {
-    const topo = dom.topo.value;
-    const mode = dom.inpMode.value;
-    const strat = dom.selSteamStrat.value;
-
-    // 1. 只有在 Recovery + Steam 模式下才显示策略选择器
-    if (topo === 'RECOVERY' && mode === 'STEAM') {
-        dom.boxSteamStrat.classList.remove('hidden');
-        dom.boxFeedParams.classList.remove('hidden');
-        
-        // 2. 根据策略显示不同的补水参数
-        if (strat === 'STRATEGY_PRE') {
-            dom.divTempPre.classList.remove('hidden'); // 预热需要填目标温度
-        } else {
-            dom.divTempPre.classList.add('hidden');    // 直产蒸汽不需要填(用饱和温度)
-        }
+dom.selLoadUnit.addEventListener('change', (e) => {
+    const unit = e.target.value;
+    if (unit === 'TON') {
+        dom.inpLoad.classList.add('hidden');
+        dom.inpLoadTon.classList.remove('hidden');
+        dom.unitLoadDisplay.innerText = 't/h';
+        dom.infoLoadConv.classList.remove('hidden');
+        updateLoadConversion();
     } else {
-        dom.boxSteamStrat.classList.add('hidden');
-        dom.boxFeedParams.classList.add('hidden');
+        dom.inpLoad.classList.remove('hidden');
+        dom.inpLoadTon.classList.add('hidden');
+        dom.unitLoadDisplay.innerText = 'kW';
+        dom.infoLoadConv.classList.add('hidden');
     }
+});
+
+dom.inpLoadTon.addEventListener('input', updateLoadConversion);
+dom.inpLoadIn.addEventListener('input', () => { if(dom.selLoadUnit.value==='TON') updateLoadConversion(); });
+
+function updateLoadConversion() {
+    const tons = parseFloat(dom.inpLoadTon.value) || 0;
+    const tgtVal = parseFloat(dom.inpTarget.value);
+    const mode = dom.inpMode.value;
+    const tLoadIn = parseFloat(dom.inpLoadIn.value) || 20;
+
+    const kw = convertSteamTonsToKW(tons, tgtVal, mode, tLoadIn);
+    dom.valLoadConv.innerText = kw.toLocaleString();
 }
 
-// 监听策略改变
-dom.selSteamStrat.addEventListener('change', updateSteamUI);
+function updateLoadUI() {
+    const topo = dom.topo.value;
+    const mode = dom.inpMode.value;
+    const steamStrat = dom.selSteamStrat ? dom.selSteamStrat.value : 'STRATEGY_PRE';
 
-dom.topo.addEventListener('change', (e) => {
-    const topo = e.target.value;
     if (topo === 'RECOVERY') {
         dom.panelStd.classList.add('hidden');
+        dom.boxTargetStd.classList.add('hidden');
         dom.panelRec.classList.remove('hidden');
-        dom.lblRes1.innerText = "余热热泵 COP";
-        dom.descRes1.innerText = "Recovery HP Only";
-        dom.lblRes2.innerText = "冷凝水回收 (Water)";
-        dom.unitRes2.innerText = "t/h";
-        dom.lblRes3.innerText = "系统综合效率";
-        dom.descRes3.innerText = "Boiler + Recovery";
-    } else {
-        dom.panelStd.classList.remove('hidden');
-        dom.panelRec.classList.add('hidden');
-        dom.lblRes1.innerText = "系统 COP";
-        dom.descRes1.innerText = "Performance";
-        dom.lblRes2.innerText = "系统温升 (Lift)";
-        dom.unitRes2.innerText = "K";
-        dom.lblRes3.innerText = "一次能源利用率 (PER)";
-        dom.descRes3.innerText = "Efficiency";
-        if (topo === 'COUPLED') {
-            dom.lblSource.innerText = "工业余热/废热温度";
-            dom.inpSource.value = SYSTEM_CONFIG.wasteHeatTemp;
+
+        if (mode === 'WATER') {
+            dom.lblLoadIn.innerText = "回水温度 (Return)";
+            dom.lblLoadOut.innerText = "供水温度 (Supply)";
+            dom.boxSteamStrat.classList.add('hidden'); 
+            
+            if (dom.inpLoadIn.value == "20" || dom.inpLoadIn.value == "") dom.inpLoadIn.value = "50";
+            if (dom.inpLoadOut.value == "90" || dom.inpLoadOut.value == "") dom.inpLoadOut.value = "70";
+
         } else {
-            dom.lblSource.innerText = "室外干球温度";
-            dom.inpSource.value = "-5";
+            dom.lblLoadIn.innerText = "补水温度 (Feed)";
+            dom.boxSteamStrat.classList.remove('hidden');
+
+            if (steamStrat === 'STRATEGY_PRE') {
+                dom.lblLoadOut.innerText = "预热目标温度 (Pre-heat)";
+                if (dom.inpLoadIn.value == "50") dom.inpLoadIn.value = "20";
+                dom.inpLoadOut.value = "90"; 
+            } else {
+                dom.lblLoadOut.innerText = "蒸汽饱和温度 (Sat. Target)";
+                if (dom.inpLoadIn.value == "50") dom.inpLoadIn.value = "20";
+                const satT = getSatTempFromPressure(parseFloat(dom.inpTarget.value));
+                dom.inpLoadOut.value = satT;
+            }
         }
+    } else {
+        dom.panelRec.classList.add('hidden');
+        dom.panelStd.classList.remove('hidden');
+        dom.boxTargetStd.classList.remove('hidden');
+        dom.boxSteamStrat.classList.add('hidden');
     }
-    updateSteamUI(); // 触发UI更新
+    
+    if (dom.selLoadUnit.value === 'TON') updateLoadConversion();
+}
+
+if (dom.selSteamStrat) dom.selSteamStrat.addEventListener('change', updateLoadUI);
+dom.topo.addEventListener('change', () => {
+    updateLoadUI();
     updateDiagram();
 });
 
 function setTargetMode(mode) {
     dom.inpMode.value = mode;
     const isSteam = (mode === 'STEAM');
+    
     dom.btnSteam.className = isSteam ? "flex-1 py-1.5 text-xs font-bold rounded-md shadow bg-white text-indigo-600 transition" : "flex-1 py-1.5 text-xs font-bold rounded-md text-slate-500 hover:text-slate-700 transition";
     dom.btnWater.className = !isSteam ? "flex-1 py-1.5 text-xs font-bold rounded-md shadow bg-white text-indigo-600 transition" : "flex-1 py-1.5 text-xs font-bold rounded-md text-slate-500 hover:text-slate-700 transition";
+    
     if (isSteam) {
         dom.lblTarget.innerText = "目标饱和蒸汽压力";
         dom.inpTarget.value = "0.5"; dom.inpTarget.step = "0.1";
@@ -237,14 +263,21 @@ function setTargetMode(mode) {
         dom.unitTarget.innerText = "°C";
         dom.boxSteamInfo.classList.add('hidden');
     }
-    updateSteamUI(); // 触发UI更新
+    updateLoadUI(); 
 }
 dom.btnWater.addEventListener('click', () => setTargetMode('WATER'));
 dom.btnSteam.addEventListener('click', () => setTargetMode('STEAM'));
 
 dom.inpTarget.addEventListener('input', () => {
-    if (dom.inpMode.value === 'STEAM') updateSatTempPreview();
+    if (dom.inpMode.value === 'STEAM') {
+        updateSatTempPreview();
+        if (dom.selSteamStrat && dom.selSteamStrat.value === 'STRATEGY_GEN' && dom.topo.value === 'RECOVERY') {
+            dom.inpLoadOut.value = getSatTempFromPressure(parseFloat(dom.inpTarget.value));
+        }
+    }
+    if(dom.selLoadUnit.value==='TON') updateLoadConversion();
 });
+
 function updateSatTempPreview() {
     const p = parseFloat(dom.inpTarget.value);
     const t = getSatTempFromPressure(p);
@@ -259,19 +292,29 @@ dom.chkManualCop.addEventListener('change', (e) => {
     e.target.checked ? dom.inpManualCop.classList.replace('bg-slate-100', 'bg-white') : dom.inpManualCop.classList.replace('bg-white', 'bg-slate-100');
 });
 
-// --- 计算核心 ---
-
 dom.btnCalc.addEventListener('click', () => {
     const topo = dom.topo.value;
     const mode = dom.inpMode.value;
     const srcT = parseFloat(dom.inpSource.value);
     const tgtVal = parseFloat(dom.inpTarget.value);
 
+    const tLoadIn = parseFloat(dom.inpLoadIn.value);
+    const tLoadOut = parseFloat(dom.inpLoadOut.value);
+
+    let finalLoadKW = 0;
+    if (dom.selLoadUnit.value === 'TON') {
+        const tons = parseFloat(dom.inpLoadTon.value);
+        finalLoadKW = convertSteamTonsToKW(tons, tgtVal, mode, tLoadIn);
+        log(`⚡️ 负荷折算: ${tons} t/h ≈ ${finalLoadKW} kW`, 'info');
+    } else {
+        finalLoadKW = parseFloat(dom.inpLoad.value);
+    }
+
     let perfDegree = (dom.selPerfection.value === 'CUSTOM') ? parseFloat(dom.inpPerfCustom.value) : parseFloat(dom.selPerfection.value);
     const isManualCop = dom.chkManualCop.checked;
     const manualCopVal = isManualCop ? parseFloat(dom.inpManualCop.value) : 0;
 
-    log(`RUN: 仿真启动... [Topo: ${topo}]`);
+    log(`RUN: 仿真启动... [Topo: ${topo}]`, 'info');
 
     const cycle = calculateProcessCycle({
         mode, sourceTemp: srcT, targetVal: tgtVal, perfectionDegree: perfDegree
@@ -284,7 +327,7 @@ dom.btnCalc.addEventListener('click', () => {
     }
 
     const strat = calculateHybridStrategy({
-        loadKW: parseFloat(dom.inpLoad.value),
+        loadKW: finalLoadKW,
         cop: cycle.cop,
         manualCop: manualCopVal,
         elecPrice: parseFloat(dom.inpElecPrice.value),
@@ -306,11 +349,13 @@ dom.btnCalc.addEventListener('click', () => {
         pefElec: parseFloat(dom.inpPefElec.value),
         perfectionDegree: perfDegree,
 
-        // 🟢 v7.9 透传新参数
-        steamStrategy: dom.selSteamStrat.value,
-        tFeed: parseFloat(dom.inpTempFeed.value),
-        tPre: parseFloat(dom.inpTempPre.value)
+        steamStrategy: dom.selSteamStrat ? dom.selSteamStrat.value : 'STRATEGY_PRE',
+        tLoadIn: tLoadIn,   
+        tLoadOut: tLoadOut,
+        targetMode: mode // 🟢 关键修复：透传 targetMode
     });
+
+    currentResultStrategy = strat;
 
     let displayCop = 0;
     if (isManualCop && manualCopVal > 0) {
@@ -327,9 +372,10 @@ dom.btnCalc.addEventListener('click', () => {
     let recoveredKW = 0;
 
     if (topo === 'RECOVERY') {
-        // 🟢 v7.9 热汇限制警告逻辑
         if (strat.sinkLimited) {
-            log(`⚠️ 热汇限制: 水流量不足, 实际排烟 ${strat.exhaustOutActual}°C`, 'warn');
+            log(`⚠️ 热汇限制: 水量不足, 排烟仅降至 ${strat.exhaustOutActual}°C`, 'warn');
+        } else {
+            log(`✅ 热平衡: 排烟降至 ${strat.exhaustOutActual}°C`, 'eco');
         }
 
         dom.resLift.innerText = strat.waterRecovery > 0 ? strat.waterRecovery.toFixed(2) : "0.0";
@@ -344,17 +390,15 @@ dom.btnCalc.addEventListener('click', () => {
             <span class="text-xl text-violet-600 font-bold">${sysEff.toFixed(2)}</span>
         `;
 
-        // Tooltip Logic
         const isAbs = (dom.selRecType.value === 'ABSORPTION_HP');
         const hintText = isAbs
-            ? "💡 能量守恒：吸收式热泵消耗的驱动热量（蒸汽/燃气）在做功后并未消失，而是全部进入了供水系统，相当于'第二热源'，因此总热增益显著。"
-            : "⚡️ 搬运机制：电动热泵仅消耗少量高品位电能来搬运低品位余热，系统增量主要纯来自于回收的余热本身。";
+            ? "💡 吸收式原理：驱动热量未消失，而是作为'第二热源'汇入供水，实现 >100% 综合效率。"
+            : "⚡️ 电动原理：消耗电能搬运余热，系统增量纯来自于回收的物理热量。";
 
         dom.descRes3.innerHTML = `
             <div class="group relative flex items-center cursor-help">
                 <span class="text-emerald-500 font-bold">Boost: +${(hpRatio * 1).toFixed(1)}%</span>
                 <div class="ml-1 w-3 h-3 rounded-full border border-slate-400 text-slate-400 text-[8px] flex items-center justify-center">?</div>
-                <span class="text-slate-400 text-[9px] ml-1">| PER:${strat.per}</span>
                 
                 <div class="hidden group-hover:block absolute bottom-full left-0 mb-2 w-56 bg-slate-800 text-white text-[10px] p-2.5 rounded shadow-xl z-50 font-normal leading-relaxed border border-slate-600 pointer-events-none">
                     ${hintText}
@@ -363,13 +407,22 @@ dom.btnCalc.addEventListener('click', () => {
             </div>
         `;
 
-        recoveredKW = parseFloat(dom.inpLoad.value) * (hpRatio / 100);
+        recoveredKW = finalLoadKW * (hpRatio / 100);
+
+        if (strat.reqData) {
+            dom.btnGenReq.disabled = false;
+            dom.btnGenReq.classList.remove('opacity-50', 'cursor-not-allowed');
+            dom.btnGenReq.classList.add('cursor-pointer');
+        }
 
     } else {
         dom.resLift.innerText = cycle.lift.toFixed(1);
         if (dom.resPratio) dom.resPratio.innerText = cycle.pRatio.toFixed(1);
         dom.descRes3.innerText = "Efficiency";
         dom.resPer.innerText = res3Value;
+        
+        dom.btnGenReq.disabled = true;
+        dom.btnGenReq.classList.add('opacity-50', 'cursor-not-allowed');
     }
 
     dom.resCost.innerText = strat.cost.toFixed(1);
@@ -384,34 +437,83 @@ dom.btnCalc.addEventListener('click', () => {
         dom.resPayback.innerText = "--";
     }
 
-    // 准备图表所需的真实目标温度
-    const chartTargetTemp = (mode === 'STEAM') 
-        ? getSatTempFromPressure(tgtVal) 
-        : tgtVal;
+    const chartTargetTemp = (topo === 'RECOVERY') ? tLoadOut : 
+                            (mode === 'STEAM' ? getSatTempFromPressure(tgtVal) : tgtVal);
 
-    // 传递完善度和热泵类型给图表
     updateChart(topo, mode, srcT, chartTargetTemp, perfDegree, dom.selRecType.value);
-
-    // 传递回收热量给拓扑图
-    updateDiagram(recoveredKW);
-
-    if (strat.hpRatio > 0) {
-        log(`✅ [结果] ${strat.mode}`, 'eco');
-        log(`📊 ROI: ${strat.paybackPeriod}年 | Boost: +${strat.hpRatio}%`, 'info');
-    }
+    
+    const diagramSupplyT = (topo === 'RECOVERY') ? tLoadOut :
+                           (mode === 'STEAM' ? getSatTempFromPressure(tgtVal) : tgtVal);
+    
+    renderSystemDiagram('diagram-container', {
+        topology: dom.topo.value,
+        tSource: parseFloat(dom.inpSource.value),
+        tDisplaySource: topo === 'RECOVERY' ? parseFloat(dom.inpFlueIn.value) : parseFloat(dom.inpSource.value),
+        tSupply: diagramSupplyT,
+        recoveredKW: recoveredKW
+    });
 });
 
 function updateDiagram(recoveredKW = 0) {
     renderSystemDiagram('diagram-container', {
         topology: dom.topo.value,
-        tSource: parseFloat(dom.inpSource.value),
-        tDisplaySource: dom.topo.value === 'RECOVERY' ? parseFloat(dom.inpFlueIn.value) : parseFloat(dom.inpSource.value),
-        tSupply: dom.inpMode.value === 'STEAM' ? getSatTempFromPressure(parseFloat(dom.inpTarget.value)) : parseFloat(dom.inpTarget.value),
-        recoveredKW: recoveredKW
+        tSource: -5,
+        tDisplaySource: dom.topo.value === 'RECOVERY' ? 130 : -5,
+        tSupply: 60,
+        recoveredKW: 0
     });
 }
 
-// Init
+dom.btnGenReq.addEventListener('click', () => {
+    if (!currentResultStrategy || !currentResultStrategy.reqData) {
+        log('请先运行仿真以生成数据', 'warn');
+        return;
+    }
+    const d = currentResultStrategy.reqData;
+    
+    dom.reqSourceType.innerText = d.sourceType;
+    dom.reqSourceIn.innerText = d.sourceIn.toFixed(1);
+    dom.reqSourceOut.innerText = d.sourceOut.toFixed(1);
+    
+    dom.reqLoadType.innerText = d.loadType;
+    dom.reqLoadIn.innerText = d.loadIn.toFixed(1);
+    dom.reqLoadOut.innerText = d.loadOut.toFixed(1);
+    dom.reqCapacity.innerText = d.capacity.toLocaleString();
+
+    dom.modalReq.classList.remove('hidden');
+});
+
+dom.btnCloseModal.addEventListener('click', () => {
+    dom.modalReq.classList.add('hidden');
+});
+
+dom.btnCopyReq.addEventListener('click', () => {
+    if (!currentResultStrategy) return;
+    const d = currentResultStrategy.reqData;
+    const text = `
+【工业热泵选型参数确认书】
+项目名称: IES仿真项目
+---
+1. 热源侧
+介质: ${d.sourceType}
+入口温度: ${d.sourceIn.toFixed(1)} °C
+出口温度: ${d.sourceOut.toFixed(1)} °C
+估算流量: ${d.sourceFlow} m³/h
+
+2. 负荷侧
+目标工况: ${d.loadType}
+入口温度: ${d.loadIn.toFixed(1)} °C
+目标温度: ${d.loadOut.toFixed(1)} °C
+制热量需求: ${d.capacity.toLocaleString()} kW
+---
+生成的选型建议 (v8.0 Professional)
+    `.trim();
+    
+    navigator.clipboard.writeText(text).then(() => {
+        dom.btnCopyReq.innerText = "已复制!";
+        setTimeout(() => dom.btnCopyReq.innerText = "复制文本", 2000);
+    });
+});
+
 setTargetMode('WATER');
 dom.selFuel.dispatchEvent(new Event('change'));
-updateDiagram();

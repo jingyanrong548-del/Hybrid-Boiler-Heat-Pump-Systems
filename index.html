@@ -5,9 +5,18 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>工业综合能源系统仿真 (IES Simulation)</title>
+  <style>
+    @keyframes fadeInUp {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .animate-fade-in-up {
+      animation: fadeInUp 0.3s ease-out forwards;
+    }
+  </style>
 </head>
 
-<body class="bg-slate-50 text-slate-800 antialiased font-sans">
+<body class="bg-slate-50 text-slate-800 antialiased font-sans relative">
 
   <header class="bg-slate-900 text-white shadow-lg border-b border-slate-700">
     <div class="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
@@ -17,7 +26,7 @@
       </div>
       <div class="flex items-center gap-4">
         <span class="text-xs text-slate-400">Core: Process Model</span>
-        <span class="text-xs bg-amber-600 px-3 py-1 rounded-full font-mono text-white">v7.9 Steam Enhanced</span>
+        <span class="text-xs bg-cyan-600 px-3 py-1 rounded-full font-mono text-white shadow-sm border border-cyan-400">v8.0 Professional</span>
       </div>
     </div>
   </header>
@@ -79,21 +88,42 @@
             </div>
 
             <div id="panel-input-recovery" class="hidden space-y-4 bg-orange-50 p-3 rounded-lg border border-orange-100">
-                <div class="relative">
-                  <label class="block text-xs font-medium text-orange-800 mb-1">初始排烟温度 (Exhaust In)</label>
-                  <div class="relative">
-                    <input type="number" id="input-flue-temp-in" value="130" step="5"
-                      class="w-full pl-3 pr-16 py-1.5 border border-orange-200 rounded-lg focus:ring-2 focus:ring-orange-500 focus:outline-none font-mono text-slate-700">
-                    <span class="absolute right-6 top-1.5 text-orange-400 text-xs pointer-events-none bg-white pl-1">°C</span>
-                  </div>
+                <div class="grid grid-cols-2 gap-3 border-b border-orange-100 pb-3">
+                    <div class="relative">
+                      <label class="block text-[10px] font-medium text-orange-800 mb-1">初始排烟 (In)</label>
+                      <div class="relative">
+                        <input type="number" id="input-flue-temp-in" value="130" step="5"
+                          class="w-full pl-2 pr-6 py-1.5 border border-orange-200 rounded focus:ring-1 focus:ring-orange-500 font-mono text-slate-700 text-xs">
+                        <span class="absolute right-2 top-1.5 text-orange-400 text-[10px] pointer-events-none">°C</span>
+                      </div>
+                    </div>
+                    <div class="relative">
+                      <label class="block text-[10px] font-medium text-orange-800 mb-1">目标排烟 (Out)</label>
+                      <div class="relative">
+                        <input type="number" id="input-flue-temp-out" value="40" step="5"
+                          class="w-full pl-2 pr-6 py-1.5 border border-orange-200 rounded focus:ring-1 focus:ring-orange-500 font-mono text-slate-700 text-xs font-bold">
+                        <span class="absolute right-2 top-1.5 text-orange-400 text-[10px] pointer-events-none">°C</span>
+                      </div>
+                    </div>
                 </div>
-                <div class="relative">
-                  <label class="block text-xs font-medium text-orange-800 mb-1">目标排烟温度 (Target Out)</label>
-                  <div class="relative">
-                    <input type="number" id="input-flue-temp-out" value="40" step="5"
-                      class="w-full pl-3 pr-16 py-1.5 border border-orange-200 rounded-lg focus:ring-2 focus:ring-orange-500 focus:outline-none font-mono text-slate-700 font-bold">
-                    <span class="absolute right-6 top-1.5 text-orange-400 text-xs pointer-events-none bg-white pl-1">°C</span>
-                  </div>
+
+                <div class="grid grid-cols-2 gap-3 pt-1">
+                    <div class="relative">
+                         <label id="label-load-in" class="block text-[10px] font-bold text-orange-900 mb-1">入口/补水温度</label>
+                         <div class="relative">
+                            <input type="number" id="input-load-in" value="50"
+                              class="w-full pl-2 pr-6 py-1.5 border border-orange-300 rounded focus:ring-1 focus:ring-orange-500 font-mono text-slate-800 text-xs bg-white">
+                            <span class="absolute right-2 top-1.5 text-orange-400 text-[10px] pointer-events-none">°C</span>
+                         </div>
+                    </div>
+                    <div class="relative">
+                         <label id="label-load-out" class="block text-[10px] font-bold text-orange-900 mb-1">出口/目标温度</label>
+                         <div class="relative">
+                            <input type="number" id="input-load-out" value="70"
+                              class="w-full pl-2 pr-6 py-1.5 border border-orange-300 rounded focus:ring-1 focus:ring-orange-500 font-mono text-slate-800 text-xs bg-white font-bold">
+                            <span class="absolute right-2 top-1.5 text-orange-400 text-[10px] pointer-events-none">°C</span>
+                         </div>
+                    </div>
                 </div>
 
                 <div id="box-steam-strategy" class="hidden space-y-2 pt-2 border-t border-orange-200 border-dashed">
@@ -102,25 +132,6 @@
                        <option value="STRATEGY_PRE">锅炉补水预热 (Feed Preheating)</option>
                        <option value="STRATEGY_GEN">直接生产蒸汽 (Direct Generation)</option>
                    </select>
-                </div>
-
-                <div id="box-feed-params" class="hidden grid grid-cols-2 gap-2">
-                    <div class="relative">
-                         <label class="block text-[10px] font-bold text-orange-800 mb-1">初始补水温度</label>
-                         <div class="relative">
-                            <input type="number" id="input-temp-feed" value="20"
-                              class="w-full pl-2 pr-6 py-1.5 border border-orange-200 rounded focus:ring-1 focus:ring-orange-500 font-mono text-slate-700 text-xs">
-                            <span class="absolute right-2 top-1.5 text-orange-400 text-[10px] pointer-events-none">°C</span>
-                         </div>
-                    </div>
-                    <div class="relative" id="div-temp-pre">
-                         <label class="block text-[10px] font-bold text-orange-800 mb-1">预热目标温度</label>
-                         <div class="relative">
-                            <input type="number" id="input-temp-pre" value="90"
-                              class="w-full pl-2 pr-6 py-1.5 border border-orange-200 rounded focus:ring-1 focus:ring-orange-500 font-mono text-slate-700 text-xs">
-                            <span class="absolute right-2 top-1.5 text-orange-400 text-[10px] pointer-events-none">°C</span>
-                         </div>
-                    </div>
                 </div>
 
                 <div class="pt-2 border-t border-orange-200">
@@ -132,7 +143,7 @@
                 </div>
             </div>
 
-            <div>
+            <div id="box-target-std">
               <label id="label-target-val" class="block text-xs font-medium text-slate-700 mb-1">目标供水/回水温度</label>
               <div class="relative">
                 <input type="number" id="input-target-val" value="60" step="1"
@@ -147,13 +158,28 @@
 
             <div class="grid grid-cols-2 gap-3">
                 <div>
-                  <label class="block text-xs font-medium text-slate-700 mb-1">设计热负荷</label>
+                  <div class="flex justify-between items-center mb-1">
+                    <label class="block text-xs font-medium text-slate-700">设计热负荷</label>
+                    <select id="select-load-unit" class="text-[9px] border-none bg-slate-100 rounded px-1 py-0 focus:ring-0 cursor-pointer text-indigo-600 font-bold hover:bg-slate-200">
+                        <option value="KW">kW</option>
+                        <option value="TON">Ton/h (蒸吨)</option>
+                    </select>
+                  </div>
+                  
                   <div class="relative">
                     <input type="number" id="input-load" value="2000"
                       class="w-full pl-2 pr-12 py-1.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 font-mono text-slate-700">
-                    <span class="absolute right-4 top-1.5 text-slate-400 text-xs pointer-events-none bg-white pl-1">kW</span>
+                    
+                    <input type="number" id="input-load-ton" value="4" step="0.5"
+                      class="hidden w-full pl-2 pr-12 py-1.5 border border-blue-300 rounded-lg focus:ring-2 focus:ring-blue-500 font-mono text-slate-700 bg-blue-50">
+                      
+                    <span id="unit-load-display" class="absolute right-4 top-1.5 text-slate-400 text-xs pointer-events-none pl-1">kW</span>
+                  </div>
+                  <div id="info-load-converted" class="hidden text-[9px] text-slate-400 mt-1 text-right font-mono">
+                    ≈ <span id="val-load-converted">--</span> kW
                   </div>
                 </div>
+
                 <div>
                   <label class="block text-xs font-medium text-slate-700 mb-1">年运行小时</label>
                   <div class="relative">
@@ -179,7 +205,7 @@
             
             <div class="grid grid-cols-2 gap-3">
                 <div>
-                   <label class="block text-[10px] text-slate-400 mb-1">电网一次能源系数 (PEF)</label>
+                   <label class="block text-[10px] text-slate-400 mb-1">电网 PEF</label>
                    <div class="relative">
                      <input type="number" id="inp-pef-elec" value="2.5" step="0.1"
                       class="w-full pl-2 pr-10 py-1 text-xs border border-slate-300 rounded focus:ring-1 focus:ring-indigo-500 font-mono">
@@ -297,7 +323,7 @@
           </div>
           
           <button id="btn-calculate"
-            class="w-full mt-6 bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-4 rounded-lg transition shadow-md flex items-center justify-center gap-2">
+            class="w-full mt-6 bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-4 rounded-lg transition shadow-md flex items-center justify-center gap-2 transform hover:scale-[1.02]">
             <span>🚀 运行仿真 (Simulate)</span>
           </button>
         </div>
@@ -362,6 +388,12 @@
                     <div class="text-[10px] text-orange-500">Years</div>
                 </div>
             </div>
+            
+            <div class="px-4 py-2 bg-slate-50 border-t border-slate-100 flex justify-end">
+                <button id="btn-gen-req" class="text-xs font-bold text-indigo-600 hover:text-indigo-800 flex items-center gap-1 opacity-50 cursor-not-allowed transition" disabled>
+                    <span>📋 生成厂家选型单 (Generate Requisition)</span>
+                </button>
+            </div>
         </div>
 
         <div class="bg-white p-6 rounded-xl shadow-md border border-slate-200">
@@ -384,7 +416,7 @@
             </div>
           </div>
           <div id="system-log" class="p-4 font-mono text-[10px] text-green-400 overflow-y-auto flex-1 space-y-1">
-            <div>> Initializing v7.9 Steam Enhanced... [OK]</div>
+            <div>> Initializing v8.0 Professional... [OK]</div>
             <div>> Waiting for user input...</div>
           </div>
         </div>
@@ -393,7 +425,91 @@
     </div>
   </main>
 
+  <div id="modal-requisition" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm transition-opacity duration-300">
+    <div class="bg-white rounded-xl shadow-2xl w-full max-w-2xl overflow-hidden m-4 animate-fade-in-up">
+        <div class="bg-slate-800 px-6 py-4 flex justify-between items-center border-b border-slate-700">
+           <h3 class="text-white font-bold text-lg flex items-center gap-2">
+               <span>📋</span> 工业热泵选型参数确认书
+           </h3>
+           <button id="btn-close-modal" class="text-slate-400 hover:text-white transition text-xl font-bold">&times;</button>
+        </div>
+        
+        <div class="p-0 overflow-y-auto max-h-[70vh]">
+            <table class="w-full text-sm border-collapse">
+                <thead>
+                    <tr class="bg-indigo-50 text-indigo-900">
+                        <th colspan="3" class="px-4 py-2 text-left font-bold border-b border-indigo-100">1. 热源侧参数 (Source Side)</th>
+                    </tr>
+                </thead>
+                <tbody class="text-slate-700">
+                    <tr class="border-b border-slate-100">
+                        <td class="px-4 py-2 w-1/3 text-slate-500">介质类型</td>
+                        <td class="px-4 py-2 font-mono font-bold" id="req-source-type">--</td>
+                        <td class="px-4 py-2 text-xs text-slate-400">烟气/水</td>
+                    </tr>
+                    <tr class="border-b border-slate-100">
+                        <td class="px-4 py-2 text-slate-500">入口温度 (In)</td>
+                        <td class="px-4 py-2 font-mono font-bold" id="req-source-in">--</td>
+                        <td class="px-4 py-2 text-xs text-slate-400">°C</td>
+                    </tr>
+                    <tr class="border-b border-slate-100">
+                        <td class="px-4 py-2 text-slate-500">目标出口 (Out)</td>
+                        <td class="px-4 py-2 font-mono font-bold" id="req-source-out">--</td>
+                        <td class="px-4 py-2 text-xs text-slate-400">°C (决定回收率)</td>
+                    </tr>
+                </tbody>
+
+                <thead>
+                    <tr class="bg-amber-50 text-amber-900">
+                        <th colspan="3" class="px-4 py-2 text-left font-bold border-b border-amber-100 border-t border-slate-100">2. 负荷侧参数 (Load Side)</th>
+                    </tr>
+                </thead>
+                <tbody class="text-slate-700">
+                    <tr class="border-b border-slate-100">
+                        <td class="px-4 py-2 w-1/3 text-slate-500">目标工况</td>
+                        <td class="px-4 py-2 font-mono font-bold" id="req-load-type">--</td>
+                        <td class="px-4 py-2 text-xs text-slate-400">热水/蒸汽</td>
+                    </tr>
+                    <tr class="border-b border-slate-100">
+                        <td class="px-4 py-2 text-slate-500">入口温度 (In)</td>
+                        <td class="px-4 py-2 font-mono font-bold" id="req-load-in">--</td>
+                        <td class="px-4 py-2 text-xs text-slate-400">°C (补水/回水)</td>
+                    </tr>
+                    <tr class="border-b border-slate-100">
+                        <td class="px-4 py-2 text-slate-500">出口温度 (Out)</td>
+                        <td class="px-4 py-2 font-mono font-bold" id="req-load-out">--</td>
+                        <td class="px-4 py-2 text-xs text-slate-400">°C (预热/供水)</td>
+                    </tr>
+                    <tr class="border-b border-slate-100 bg-yellow-50/50">
+                        <td class="px-4 py-2 text-slate-500 font-bold">制热量需求</td>
+                        <td class="px-4 py-2 font-mono font-bold text-indigo-600 text-lg" id="req-capacity">--</td>
+                        <td class="px-4 py-2 text-xs text-slate-400">kW</td>
+                    </tr>
+                </tbody>
+
+                <thead>
+                    <tr class="bg-slate-50 text-slate-700">
+                        <th colspan="3" class="px-4 py-2 text-left font-bold border-b border-slate-200 border-t border-slate-100">3. 专家备注 (Expert Notes)</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td colspan="3" class="px-4 py-3 text-xs text-slate-500 italic bg-slate-50">
+                            "技术特别说明：本项目为大温升工况。建议核算 IPLV。若采用吸收式，请注明类型。蒸发器侧建议采用 316L 或钛管防腐。"
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="px-6 py-4 bg-slate-50 border-t border-slate-200 flex justify-end gap-3">
+            <span class="text-xs text-slate-400 self-center">请截图或复制参数发送给厂家</span>
+            <button id="btn-copy-req" class="px-4 py-2 bg-white border border-slate-300 rounded shadow-sm text-sm font-bold text-slate-700 hover:bg-slate-50">复制文本</button>
+            <button onclick="document.getElementById('modal-requisition').classList.add('hidden')" class="px-4 py-2 bg-indigo-600 rounded shadow-sm text-sm font-bold text-white hover:bg-indigo-700">关闭</button>
+        </div>
+    </div>
+  </div>
+
   <script type="module" src="/src/main.js"></script>
 </body>
 </html>
-}
