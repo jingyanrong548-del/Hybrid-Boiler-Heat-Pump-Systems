@@ -17,7 +17,7 @@
       </div>
       <div class="flex items-center gap-4">
         <span class="text-xs text-slate-400">Core: Process Model</span>
-        <span class="text-xs bg-indigo-500 px-3 py-1 rounded-full font-mono">v6.4 Dashboard</span>
+        <span class="text-xs bg-indigo-500 px-3 py-1 rounded-full font-mono">v6.4.1 UI Fix</span>
       </div>
     </div>
   </header>
@@ -71,7 +71,7 @@
               <div class="relative">
                 <input type="number" id="input-temp-source" value="-5"
                   class="w-full pl-3 pr-16 py-1.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none font-mono text-slate-700">
-                <span class="absolute right-3 top-1.5 text-slate-400 text-xs pointer-events-none bg-white pl-1">°C</span>
+                <span class="absolute right-6 top-1.5 text-slate-400 text-xs pointer-events-none bg-white pl-1">°C</span>
               </div>
             </div>
 
@@ -80,7 +80,7 @@
               <div class="relative">
                 <input type="number" id="input-target-val" value="60" step="1"
                   class="w-full pl-3 pr-20 py-1.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none font-mono text-slate-700 font-bold">
-                <span id="unit-target-val" class="absolute right-3 top-1.5 text-slate-400 text-xs pointer-events-none bg-white pl-1">°C</span>
+                <span id="unit-target-val" class="absolute right-6 top-1.5 text-slate-400 text-xs pointer-events-none bg-white pl-1">°C</span>
               </div>
               <div id="steam-info-box" class="hidden mt-1 p-1.5 bg-indigo-50 rounded border border-indigo-100 text-[10px] text-indigo-700 flex justify-between items-center">
                 <span>饱和温度:</span>
@@ -93,7 +93,7 @@
               <div class="relative">
                 <input type="number" id="input-load" value="2000"
                   class="w-full pl-3 pr-16 py-1.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none font-mono text-slate-700">
-                <span class="absolute right-3 top-1.5 text-slate-400 text-xs pointer-events-none bg-white pl-1">kW</span>
+                <span class="absolute right-6 top-1.5 text-slate-400 text-xs pointer-events-none bg-white pl-1">kW</span>
               </div>
             </div>
 
@@ -102,7 +102,7 @@
               <div class="relative">
                 <input type="number" id="input-annual-hours" value="6000" step="100" max="8760"
                   class="w-full pl-3 pr-16 py-1.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none font-mono text-slate-700">
-                <span class="absolute right-3 top-1.5 text-slate-400 text-xs pointer-events-none bg-white pl-1">hr</span>
+                <span class="absolute right-6 top-1.5 text-slate-400 text-xs pointer-events-none bg-white pl-1">hr</span>
               </div>
             </div>
           </div>
@@ -135,7 +135,7 @@
                     <option value="CUSTOM">自定义</option>
                 </select>
                 <input type="number" id="inp-manual-cop" value="3.5" step="0.1" disabled placeholder="COP"
-                    class="w-full px-2 py-1 text-xs border border-slate-300 rounded bg-slate-100 font-mono disabled:text-slate-300 text-right pr-6">
+                    class="w-full px-2 py-1 text-xs border border-slate-300 rounded bg-slate-100 font-mono disabled:text-slate-300 text-right pr-10">
               </div>
               <div id="box-perf-custom" class="hidden mt-2">
                    <input type="number" id="inp-perfection-custom" value="0.50" step="0.01" max="1.0" placeholder="0.50"
@@ -148,9 +148,9 @@
                    <label class="block text-[10px] text-slate-400 mb-1">热值 (LHV)</label>
                    <div class="flex relative">
                      <input type="number" id="inp-fuel-cal" value="10.0" step="0.1"
-                      class="w-full pl-2 pr-32 py-1 text-xs border border-slate-300 rounded focus:ring-1 focus:ring-indigo-500 font-mono">
+                      class="w-full pl-2 pr-36 py-1 text-xs border border-slate-300 rounded focus:ring-1 focus:ring-indigo-500 font-mono">
                      <div class="absolute right-1 top-0.5 bottom-0.5 flex items-center bg-slate-100 rounded border border-slate-200 px-1">
-                        <select id="sel-unit-cal" class="bg-transparent border-none text-[10px] text-slate-600 focus:ring-0 p-0 pr-1 cursor-pointer outline-none w-20">
+                        <select id="sel-unit-cal" class="bg-transparent border-none text-[10px] text-slate-600 focus:ring-0 p-0 pr-1 cursor-pointer outline-none w-24">
                             </select>
                      </div>
                    </div>
@@ -160,9 +160,9 @@
                    <label class="block text-[10px] text-slate-400 mb-1">碳因子 (CO2)</label>
                    <div class="flex relative">
                      <input type="number" id="inp-fuel-co2" value="0.202" step="0.001"
-                      class="w-full pl-2 pr-32 py-1 text-xs border border-slate-300 rounded focus:ring-1 focus:ring-indigo-500 font-mono">
+                      class="w-full pl-2 pr-36 py-1 text-xs border border-slate-300 rounded focus:ring-1 focus:ring-indigo-500 font-mono">
                      <div class="absolute right-1 top-0.5 bottom-0.5 flex items-center bg-slate-100 rounded border border-slate-200 px-1">
-                        <select id="sel-unit-co2" class="bg-transparent border-none text-[10px] text-slate-600 focus:ring-0 p-0 pr-1 cursor-pointer outline-none w-20">
+                        <select id="sel-unit-co2" class="bg-transparent border-none text-[10px] text-slate-600 focus:ring-0 p-0 pr-1 cursor-pointer outline-none w-24">
                             </select>
                      </div>
                    </div>
@@ -173,7 +173,7 @@
                     <div class="relative">
                         <input type="number" id="inp-fuel-eff" value="0.92" step="0.01" max="1.0"
                          class="w-full pl-2 pr-24 py-1 text-xs border border-slate-300 rounded focus:ring-1 focus:ring-indigo-500 font-mono">
-                        <span class="absolute right-2 top-1 text-[10px] text-slate-400 pointer-events-none bg-white pl-1">Ratio (0-1)</span>
+                        <span class="absolute right-6 top-1 text-[10px] text-slate-400 pointer-events-none bg-white pl-1">%</span>
                     </div>
                  </div>
             </div>
@@ -203,15 +203,15 @@
                 <label class="block text-xs text-slate-500 mb-1">电价 (CNY/kWh)</label>
                 <div class="relative">
                     <input type="number" id="input-elec-price" value="0.75" step="0.01"
-                    class="w-full pl-2 pr-12 py-1.5 text-sm border border-slate-300 rounded focus:ring-1 focus:ring-indigo-500 font-mono">
+                    class="w-full pl-2 pr-4 py-1.5 text-sm border border-slate-300 rounded focus:ring-1 focus:ring-indigo-500 font-mono">
                 </div>
               </div>
               <div>
                 <label class="block text-xs text-slate-500 mb-1">燃料单价</label>
                 <div class="relative">
                   <input type="number" id="input-fuel-price" value="3.80" step="0.1"
-                    class="w-full pl-2 pr-16 py-1.5 text-sm border border-slate-300 rounded focus:ring-1 focus:ring-indigo-500 font-mono">
-                  <span id="label-fuel-unit" class="absolute right-2 top-1.5 text-xs text-slate-400 pointer-events-none">/unit</span>
+                    class="w-full pl-2 pr-20 py-1.5 text-sm border border-slate-300 rounded focus:ring-1 focus:ring-indigo-500 font-mono">
+                  <span id="label-fuel-unit" class="absolute right-4 top-1.5 text-xs text-slate-400 pointer-events-none bg-white pl-1">/unit</span>
                 </div>
               </div>
             </div>
