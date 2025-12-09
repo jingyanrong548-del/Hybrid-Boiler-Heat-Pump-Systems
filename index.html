@@ -5,8 +5,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>工业综合能源系统仿真 (IES Simulation)</title>
-  <script type="module" crossorigin src="./assets/index-CwWpQ5Qb.js"></script>
-  <link rel="stylesheet" crossorigin href="./assets/index-CiDmkNCJ.css">
+  <script type="module" crossorigin src="./assets/index-DE3DT3_j.js"></script>
+  <link rel="stylesheet" crossorigin href="./assets/index-2UQYxIrc.css">
 </head>
 
 <body class="bg-slate-50 text-slate-800 antialiased font-sans">
@@ -19,7 +19,7 @@
       </div>
       <div class="flex items-center gap-4">
         <span class="text-xs text-slate-400">Core: Process Model</span>
-        <span class="text-xs bg-indigo-500 px-3 py-1 rounded-full font-mono">v6.4.1 UI Fix</span>
+        <span class="text-xs bg-orange-600 px-3 py-1 rounded-full font-mono">v6.5 ROI Edition</span>
       </div>
     </div>
   </header>
@@ -71,7 +71,7 @@
             <div class="relative">
               <label id="label-source-temp" class="block text-xs font-medium text-slate-700 mb-1">室外干球温度</label>
               <div class="relative">
-                <input type="number" id="input-temp-source" value="-5"
+                <input type="number" id="input-temp-source" value="-5" min="-40" max="40"
                   class="w-full pl-3 pr-16 py-1.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none font-mono text-slate-700">
                 <span class="absolute right-6 top-1.5 text-slate-400 text-xs pointer-events-none bg-white pl-1">°C</span>
               </div>
@@ -205,14 +205,14 @@
                 <label class="block text-xs text-slate-500 mb-1">电价 (CNY/kWh)</label>
                 <div class="relative">
                     <input type="number" id="input-elec-price" value="0.75" step="0.01"
-                    class="w-full pl-2 pr-4 py-1.5 text-sm border border-slate-300 rounded focus:ring-1 focus:ring-indigo-500 font-mono">
+                    class="w-full pl-2 pr-12 py-1.5 text-sm border border-slate-300 rounded focus:ring-1 focus:ring-indigo-500 font-mono">
                 </div>
               </div>
               <div>
                 <label class="block text-xs text-slate-500 mb-1">燃料单价</label>
                 <div class="relative">
                   <input type="number" id="input-fuel-price" value="3.80" step="0.1"
-                    class="w-full pl-2 pr-20 py-1.5 text-sm border border-slate-300 rounded focus:ring-1 focus:ring-indigo-500 font-mono">
+                    class="w-full pl-2 pr-16 py-1.5 text-sm border border-slate-300 rounded focus:ring-1 focus:ring-indigo-500 font-mono">
                   <span id="label-fuel-unit" class="absolute right-4 top-1.5 text-xs text-slate-400 pointer-events-none bg-white pl-1">/unit</span>
                 </div>
               </div>
@@ -261,7 +261,7 @@
                 <h3 class="text-xs font-bold text-slate-600 uppercase tracking-wide">💰 经济可行性分析 (Economic Feasibility)</h3>
                 <span class="text-[10px] text-slate-400">基于当前负荷</span>
             </div>
-            <div class="grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-slate-100">
+            <div class="grid grid-cols-1 md:grid-cols-4 divide-y md:divide-y-0 md:divide-x divide-slate-100">
                 
                 <div class="p-4 flex flex-col justify-center items-center text-center hover:bg-slate-50 transition">
                     <div class="text-xs text-slate-400 mb-1">小时运行成本</div>
@@ -275,10 +275,16 @@
                     <div class="text-[10px] text-slate-400">CNY / kWh_heat</div>
                 </div>
 
-                <div class="p-4 flex flex-col justify-center items-center text-center bg-emerald-50/50 hover:bg-emerald-50 transition">
+                <div class="p-4 flex flex-col justify-center items-center text-center hover:bg-emerald-50 transition">
                     <div class="text-xs text-emerald-600 font-bold mb-1">预估年节省额</div>
                     <div class="text-2xl font-bold text-emerald-600" id="res-annual-save">--</div>
                     <div class="text-[10px] text-emerald-500">CNY / Year</div>
+                </div>
+
+                <div class="p-4 flex flex-col justify-center items-center text-center bg-orange-50/50 hover:bg-orange-50 transition">
+                    <div class="text-xs text-orange-600 font-bold mb-1">静态回收期 (ROI)</div>
+                    <div class="text-2xl font-bold text-orange-600" id="res-payback">--</div>
+                    <div class="text-[10px] text-orange-500">Years (增量)</div>
                 </div>
             </div>
         </div>
@@ -303,7 +309,7 @@
             </div>
           </div>
           <div id="system-log" class="p-4 font-mono text-[10px] text-green-400 overflow-y-auto flex-1 space-y-1">
-            <div>> Initializing v6.4 Dashboard... [OK]</div>
+            <div>> Initializing v6.5 ROI Edition... [OK]</div>
             <div>> Waiting for user input...</div>
           </div>
         </div>
