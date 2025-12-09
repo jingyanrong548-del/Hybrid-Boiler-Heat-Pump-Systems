@@ -1,186 +1,290 @@
-// src/logic.js - 核心计算逻辑 (v2.1 Industrial)
+// src/logic.js - v6.4 Dashboard Kernel
 
-// --- 基础配置 ---
+// --- 1. 基础配置与换算常量 ---
 export const SYSTEM_CONFIG = {
-    currency: 'CNY',
-    // 工业余热源恒定温度 (例如：冷却水回水、冷凝器排热)
-    wasteHeatTemp: 35.0, 
+    wasteHeatTemp: 35.0, // 默认工业余热温度
+    annualHours: 6000,   // 年运行小时数 (工业典型值)
+};
+
+// 能量单位换算系数 (目标基准: 1 kWh)
+export const UNIT_CONVERTERS = {
+    'kWh': 1.0,
+    'MJ': 3.6,        // 1 kWh = 3.6 MJ
+    'kcal': 860.0,    // 1 kWh ≈ 860 kcal
+    'kJ': 3600.0,     // 1 kWh = 3600 kJ
+    'GJ': 0.0036      // 1 kWh = 3.6e-3 GJ (用于蒸汽 GJ/t)
 };
 
 /**
- * 燃料数据库：统一化石能源的热值、成本与碳排放模型
- * 价格单位: CNY
- * 热值单位: kWh (归一化)
- * 碳排因子: kgCO2/kWh (热值当量)
+ * 燃料数据库 (Standard Database)
+ * 热值基准: kWh/unit
+ * 碳排基准: kg/kWh (热值当量)
  */
 export const FuelDatabase = {
-    // 天然气: 燃烧效率高，碳排中等
-    'NATURAL_GAS': { 
-        name: '天然气 (Natural Gas)', 
-        calorificValue: 10.0, // kWh/m3
-        efficiency: 0.92,     // 冷凝锅炉效率
+    'NATURAL_GAS': {
+        name: '天然气',
+        calorificValue: 10.0, // ~36 MJ/m³
+        efficiency: 0.92,
         unit: 'm³',
-        co2Factor: 0.202      // kgCO2/kWh (IPCC缺省值参考)
+        co2Factor: 0.202
     },
-    // 工业电力: 效率极高(直热)，但电网碳排较高
-    'ELECTRICITY': { 
-        name: '工业电力 (Electricity)', 
-        calorificValue: 1.0, 
-        efficiency: 0.98,     // 电阻锅炉效率
+    'ELECTRICITY': {
+        name: '工业电力',
+        calorificValue: 1.0,
+        efficiency: 0.98,
         unit: 'kWh',
-        co2Factor: 0.58       // kgCO2/kWh (典型区域电网平均值)
+        co2Factor: 0.58
     },
-    // 煤炭: 价格低，效率低，碳排极高
-    'COAL': { 
-        name: '动力煤 (Coal)', 
-        calorificValue: 7.0,  // kWh/kg (标煤折算)
-        efficiency: 0.75,     // 燃煤锅炉效率
+    'COAL': {
+        name: '动力煤',
+        calorificValue: 7.0,  // ~5500 kcal/kg
+        efficiency: 0.75,
         unit: 'kg',
-        co2Factor: 0.34       // kgCO2/kWh (折算热值后)
+        co2Factor: 0.34
+    },
+    'DIESEL': {
+        name: '0# 柴油',
+        calorificValue: 10.3, // ~10300 kcal/kg
+        efficiency: 0.88,
+        unit: 'L',
+        co2Factor: 0.27
+    },
+    'BIOMASS': {
+        name: '生物质颗粒',
+        calorificValue: 4.8,  // ~4200 kcal/kg
+        efficiency: 0.85,
+        unit: 'kg',
+        co2Factor: 0.05
+    },
+    'STEAM_PIPE': {
+        name: '管道蒸汽',
+        calorificValue: 750.0,// ~0.75 MWh/t
+        efficiency: 0.98,
+        unit: 't',
+        co2Factor: 0.35
     }
 };
 
+// --- 2. 辅助计算函数 ---
+
 /**
- * 核心物理计算：通用逆卡诺循环 (支持环境源与余热源)
- * @param {number} T_source_C  热源温度 (环境温度 或 余热温度)
- * @param {number} T_supply_C  目标供水温度
- * @param {object} Module      CoolProp 实例
+ * 压力转饱和温度 (Water Antoine Eq)
+ * 适用: 蒸汽工况
  */
-export function calculateHeatPumpCycle(T_source_C, T_supply_C, Module) {
+export function getSatTempFromPressure(pressureMPa) {
+    if (pressureMPa <= 0) return 100;
+    const P_mmHg = pressureMPa * 7500.62;
+    const A = 8.07131, B = 1730.63, C = 233.426;
+    const val = B / (A - Math.log10(P_mmHg)) - C;
+    return parseFloat(val.toFixed(1));
+}
+
+/**
+ * [v6.4 New] 温度转饱和压力估算 (R134a 简易拟合)
+ * 用于估算压缩比 (Pressure Ratio)
+ * @param {number} tempC 温度
+ * @returns {number} 压力 (MPa, a)
+ */
+function estimateSatPressureR134a(tempC) {
+    // 简化的 Antoine-like 拟合: P = exp(A - B/(T+C))
+    // 工业常用范围 -20 ~ 80度
+    const T_k = tempC + 273.15;
+    // 粗略拟合 R134a
+    // -20C -> 0.13 MPa
+    // 0C -> 0.29 MPa
+    // 50C -> 1.32 MPa
+    // 80C -> 2.6 MPa
+    // 使用简单的物理指数增长模型模拟展示
+    return 0.2928 * Math.exp(0.035 * tempC);
+}
+
+/**
+ * 单位归一化 (Normalize Inputs)
+ */
+function normalizeCalorific(val, unit) {
+    // 例子: 用户输入 8600 kcal/m³
+    // unit = 'kcal'
+    // factor = 860
+    // result = 8600 / 860 = 10 kWh/m³
+    const factor = UNIT_CONVERTERS[unit] || 1.0;
+    return val / factor;
+}
+
+function normalizeCo2Factor(val, unit) {
+    // 单位格式如: kg/MJ
+    // 提取分母: MJ
+    const baseUnit = unit.split('/')[1] || 'kWh';
+    const factor = UNIT_CONVERTERS[baseUnit] || 1.0;
+    // 逻辑: 0.056 kg/MJ -> 1 kWh(3.6MJ) -> 0.056 * 3.6 = 0.2016 kg/kWh
+    return val * factor;
+}
+
+// --- 3. 核心物理循环计算 (Process Cycle) ---
+export function calculateProcessCycle(params) {
+    const { mode, sourceTemp, targetVal, perfectionDegree } = params;
+
     try {
-        const fluid = 'R134a'; 
-        
-        // 1. 换热温差假设
-        const dT_exchange = 5.0; 
+        let T_evap_C = sourceTemp - 5.0; // 蒸发温度
+        let T_cond_C = 0;
+        let isSteam = (mode === 'STEAM');
 
-        // 2. 确定循环边界
-        // 蒸发温度 = 热源温度 - 换热温差
-        const T_evap = (T_source_C - dT_exchange) + 273.15; 
-        // 冷凝温度 = 供水温度 + 换热温差
-        const T_cond = (T_supply_C + dT_exchange) + 273.15; 
-
-        // 物理限制保护 (防止蒸发温度过低导致计算崩溃)
-        if (T_evap < 233.15) { // < -40°C
-            return { cop: 1.0, error: "温度过低，超出物理极限" };
+        // 1. 确定冷凝侧状态
+        if (isSteam) {
+            T_cond_C = getSatTempFromPressure(targetVal) + 8.0;
+        } else {
+            T_cond_C = targetVal + 5.0;
         }
 
-        // 3. 状态点计算 (State Points)
-        // Point 1: 压缩机吸气 (饱和气)
-        const h1 = Module.PropsSI('H', 'T', T_evap, 'Q', 1, fluid);
-        const s1 = Module.PropsSI('S', 'T', T_evap, 'Q', 1, fluid);
+        // 2. 物理极值保护
+        if (T_evap_C < -45) return { cop: 1.0, error: "T_evap Too Low" };
+        if (T_cond_C > 185) return { cop: 1.0, error: "T_cond Too High" };
+        if (T_cond_C <= T_evap_C + 5) return { cop: 5.0, error: "Low Lift" };
 
-        // Point 2: 压缩机排气 (假设等熵效率 0.75 - 工业机组)
-        const P_cond = Module.PropsSI('P', 'T', T_cond, 'Q', 1, fluid);
-        const h2s = Module.PropsSI('H', 'P', P_cond, 'S', s1, fluid);
-        const isentropic_eff = 0.75;
-        const h2 = h1 + (h2s - h1) / isentropic_eff;
+        // 3. 基础热力计算
+        const T_evap_K = T_evap_C + 273.15;
+        const T_cond_K = T_cond_C + 273.15;
 
-        // Point 3: 冷凝器出口 (饱和液)
-        const h3 = Module.PropsSI('H', 'T', T_cond, 'Q', 0, fluid);
+        // 卡诺效率
+        const cop_carnot = T_cond_K / (T_cond_K - T_evap_K);
+        // 实际 COP
+        let eta = perfectionDegree || (isSteam ? 0.45 : 0.50);
+        let real_cop = cop_carnot * eta * 0.92; // 0.92 辅机修正
 
-        // 4. 性能计算
-        // 制热量 q_h = h2 - h3
-        // 耗功量 w = h2 - h1
-        const heating_capacity_per_kg = h2 - h3;
-        const work_input_per_kg = h2 - h1;
+        // [v6.4 New] 工程参数计算
+        const lift = T_cond_C - T_evap_C; // 温升
+        // 估算压缩比 (P_cond / P_evap)
+        // 如果是蒸汽压缩机(Steam Mode)，介质是水
+        // 如果是热水机组(Water Mode)，介质通常是冷媒
+        let p_ratio = 0;
+        if (isSteam) {
+            // 水蒸气压缩比估算
+            // P_evap 对应 T_evap_C (饱和)
+            // P_cond 对应 T_cond_C (饱和) -- 注意这里用冷凝温度估算排气压力
+            const p_evap = getSatTempFromPressure(0.1) === 100 ? 0.1 : 0.01; // 简化占位，实际需反函数
+            // 由于没有写水的 P(T) 函数，这里用简化逻辑：
+            // 对于蒸汽MVR，温升 10度 ~ 压缩比 1.4-1.6
+            // 简单经验公式：P_ratio ≈ (T_cond_K / T_evap_K)^ (Gamma/(Gamma-1)) ?
+            // 采用近似值: 1 + (Lift / 30)
+            p_ratio = 1.0 + (lift / 25.0);
+        } else {
+            // 冷媒压缩比估算
+            const p_evap = estimateSatPressureR134a(T_evap_C);
+            const p_cond = estimateSatPressureR134a(T_cond_C);
+            p_ratio = p_cond / p_evap;
+        }
 
-        let cop = heating_capacity_per_kg / work_input_per_kg;
-
-        // 修正：实际系统会有辅机损耗 (风机/水泵)，打个 0.9 折扣
-        cop = cop * 0.9;
-
-        return { 
-            cop: parseFloat(cop.toFixed(2)),
-            sourceTemp: T_source_C, 
+        return {
+            cop: parseFloat(real_cop.toFixed(2)),
+            lift: parseFloat(lift.toFixed(1)),
+            pRatio: parseFloat(p_ratio.toFixed(1)),
+            satTemp: isSteam ? (T_cond_C - 8.0) : null,
             error: null
         };
 
     } catch (e) {
-        console.error("Cycle Calculation Error:", e);
-        return { cop: 0, error: "物性计算失败" };
+        console.error("Calc Error:", e);
+        return { cop: 0, error: "Internal Error" };
     }
 }
 
-/**
- * 工业级混合策略计算器 (含经济性与碳排放)
- * @param {object} params 输入参数对象
- */
+// --- 4. 混合策略与经济性计算 (Dashboard Edition) ---
 export function calculateHybridStrategy(params) {
     const {
-        loadKW,         // 热负荷
-        cop,            // 当前工况 COP
-        elecPrice,      // 电价 (CNY/kWh)
-        fuelPrice,      // 燃料价格 (CNY/unit)
-        fuelTypeKey,    // 燃料类型键值
-        topology        // 'PARALLEL' | 'COUPLED'
+        loadKW,
+        cop, manualCop,
+        elecPrice, fuelPrice, fuelTypeKey, topology,
+
+        // Custom Inputs
+        customCalorific, calUnit,
+        customCo2, co2Unit,
+        customEfficiency,
+
+        annualHours // [新增] 接收年运行小时数
     } = params;
 
-    const fuelInfo = FuelDatabase[fuelTypeKey] || FuelDatabase['NATURAL_GAS'];
-    const elecInfo = FuelDatabase['ELECTRICITY'];
+    // 1. 标准化参数
+    const dbFuel = FuelDatabase[fuelTypeKey] || FuelDatabase['NATURAL_GAS'];
+    const dbElec = FuelDatabase['ELECTRICITY'];
 
-    // --- 1. 热泵运行指标 (电) ---
-    const hpPowerInput = loadKW / cop;          // kW (耗电)
-    const hpHourlyCost = hpPowerInput * elecPrice; // CNY/h
-    const hpCo2 = hpPowerInput * elecInfo.co2Factor; // kgCO2/h
+    const activeEff = (customEfficiency && customEfficiency > 0) ? customEfficiency : dbFuel.efficiency;
 
-    // --- 2. 锅炉运行指标 (燃料) ---
-    // 燃料输入热量(kWh) = 负荷 / 效率
-    const boilerInputHeat = loadKW / fuelInfo.efficiency;
-    // 物理消耗量 (m3 或 kg)
-    const fuelConsump = boilerInputHeat / fuelInfo.calorificValue; 
-    const boilerHourlyCost = fuelConsump * fuelPrice; // CNY/h
-    const boilerCo2 = boilerInputHeat * fuelInfo.co2Factor; // kgCO2/h
+    // 热值标准化 (kWh/Unit)
+    let activeCalVal = dbFuel.calorificValue;
+    if (customCalorific && customCalorific > 0) {
+        activeCalVal = normalizeCalorific(customCalorific, calUnit);
+    }
 
-    // --- 3. 策略决策逻辑 ---
-    let result = {
-        mode: "",
-        cost: 0,
-        hpRatio: 0, // 0 - 100
-        co2: 0,
-        details: ""
-    };
+    // 碳因子标准化 (kg/kWh)
+    let activeCo2Factor = dbFuel.co2Factor;
+    if (customCo2 !== undefined && customCo2 >= 0) {
+        activeCo2Factor = normalizeCo2Factor(customCo2, co2Unit);
+    }
+
+    // 确定 COP
+    const activeCop = (manualCop && manualCop > 0) ? manualCop : cop;
+
+    // 2. 成本流计算 (Hourly)
+
+    // Path A: Heat Pump
+    const hpPower = loadKW / activeCop;
+    const costHP = hpPower * elecPrice; // ¥/h
+    const co2HP = hpPower * dbElec.co2Factor; // kg/h
+
+    // Path B: Boiler
+    const boilerInputHeat_kWh = loadKW / activeEff;
+    const fuelConsump = boilerInputHeat_kWh / activeCalVal; // Unit/h
+    const costBoiler = fuelConsump * fuelPrice; // ¥/h
+    const co2Boiler = boilerInputHeat_kWh * activeCo2Factor; // kg/h
+
+    // 3. 策略判定
+    let useHP = false;
+    let modeName = "";
 
     if (topology === 'COUPLED') {
-        // [模式 B: 余热耦合]
-        // 只要热泵运行成本低于锅炉，优先全开热泵 (Base Load)
-        if (hpHourlyCost < boilerHourlyCost) {
-            result.mode = "余热提质模式 (Heat Upgrade)";
-            result.cost = hpHourlyCost;
-            result.hpRatio = 100;
-            result.co2 = hpCo2;
-        } else {
-            result.mode = "燃料直燃模式 (Direct Firing)";
-            result.cost = boilerHourlyCost;
-            result.hpRatio = 0;
-            result.co2 = boilerCo2;
-        }
+        useHP = (costHP < costBoiler);
+        modeName = useHP ? "余热回收 (Heat Recovery)" : "传统直燃 (Direct Firing)";
     } else {
-        // [模式 A: 传统解耦]
-        // COP太低(<2.5) 或 成本倒挂时切换至锅炉
-        if (cop < 2.5 || hpHourlyCost > boilerHourlyCost) {
-            result.mode = "燃料优先模式 (Fuel Priority)";
-            result.cost = boilerHourlyCost;
-            result.hpRatio = 0;
-            result.co2 = boilerCo2;
-        } else {
-            result.mode = "电驱优先模式 (Elec Priority)";
-            result.cost = hpHourlyCost;
-            result.hpRatio = 100;
-            result.co2 = hpCo2;
-        }
+        const techThreshold = (manualCop > 0) ? 0 : 2.5;
+        useHP = (activeCop > techThreshold && costHP < costBoiler);
+        modeName = useHP ? "电驱优先 (Electric)" : "燃料优先 (Fuel)";
+    }
+
+    const activeCost = useHP ? costHP : costBoiler;
+    const activeCo2 = useHP ? co2HP : co2Boiler;
+
+    // 4. [v6.4 New] 深度经济指标
+    // 综合单价 (¥/kWh_heat) = 小时总成本 / 供热负荷
+    const unitCost = activeCost / loadKW;
+
+    // [修改] 年化节省 (vs Boiler) - 使用传入的 annualHours
+    const hourlySaving = costBoiler - costHP;
+    // 使用 params.annualHours 替代 SYSTEM_CONFIG.annualHours
+    const annualSaving = hourlySaving > 0 ? (hourlySaving * annualHours) : 0;
+    // 碳减排率
+    let co2ReductionRate = 0;
+    if (co2Boiler > 0) {
+        co2ReductionRate = (co2Boiler - activeCo2) / co2Boiler * 100;
+        if (co2ReductionRate < 0) co2ReductionRate = 0; // 没减排就不显示负数
     }
 
     return {
-        ...result,
-        powerKW: (result.hpRatio === 100) ? hpPowerInput : 0,
-        fuelConsump: (result.hpRatio === 0) ? fuelConsump : 0,
-        fuelUnit: fuelInfo.unit,
-        // 返回对比数据供前端显示节省量
-        comparison: { 
-            hpCost: hpHourlyCost, 
-            boilerCost: boilerHourlyCost,
-            hpCo2: hpCo2,
-            boilerCo2: boilerCo2
+        mode: modeName,
+        activeCop: activeCop,
+        hpRatio: useHP ? 100 : 0,
+        powerKW: useHP ? hpPower : 0,
+        cost: activeCost,
+        co2: activeCo2,
+
+        // Dashboard Metrics
+        unitCost: unitCost,          // 综合热价
+        annualSaving: annualSaving,  // 年节省
+        co2Reduction: co2ReductionRate, // 减排率
+
+        comparison: {
+            hpCost: costHP,
+            boilerCost: costBoiler,
+            hpCo2: co2HP,
+            boilerCo2: co2Boiler
         }
     };
 }

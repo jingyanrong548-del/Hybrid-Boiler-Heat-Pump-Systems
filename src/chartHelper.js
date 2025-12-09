@@ -1,21 +1,24 @@
-// src/chartHelper.js
+// src/chartHelper.js - v6.2 Advanced Chart Engine
+
 import Chart from 'chart.js/auto';
-import { calculateHeatPumpCycle, SYSTEM_CONFIG } from './logic.js';
+import { calculateProcessCycle } from './logic.js';
 
 let chartInstance = null;
 
 /**
- * 智能图表绘制：根据拓扑模式自动切换 X 轴维度
- * @param {string} topology 'PARALLEL' | 'COUPLED'
- * @param {number} tInput  当前输入温度 (环境或余热)
- * @param {number} tSupply 当前目标供水温度
- * @param {object} Module  WASM 模块
+ * 绘制 COP 性能曲线
+ * v6.2 Upgrade: 接收 perfectionDegree，确保曲线与用户设定一致
+ * * @param {string} topology 'PARALLEL' | 'COUPLED'
+ * @param {string} targetMode 'WATER' | 'STEAM'
+ * @param {number} tSource 热源温度
+ * @param {number} tCurrentTarget 当前目标值 (仅用于标记或标题)
+ * @param {number} perfectionDegree 热力完善度 (0~1)
  */
-export function updateChart(topology, tInput, tSupply, Module) {
+export function updateChart(topology, targetMode, tSource, tCurrentTarget, perfectionDegree) {
     const ctx = document.getElementById('performance-chart');
     if (!ctx) return;
 
-    // 销毁旧图表
+    // 销毁旧图表实例
     if (chartInstance) {
         chartInstance.destroy();
     }
@@ -25,63 +28,104 @@ export function updateChart(topology, tInput, tSupply, Module) {
     let xLabel = "";
     let chartTitle = "";
     
-    // --- 模式分支 ---
+    // 如果没有传入完善度，使用默认显示值 (防止 crash)
+    const etaDisplay = perfectionDegree ? perfectionDegree.toFixed(2) : "Auto";
+
+    // --- 场景分支逻辑 ---
     
-    if (topology === 'PARALLEL') {
-        // [模式 A] 传统环境源：X轴 = 环境温度 (-20 ~ 20)
-        xLabel = "室外环境温度 (°C)";
-        chartTitle = `COP 趋势 (固定供水 ${tSupply}°C)`;
+    // 场景 1: 蒸汽模式 (X轴 = 压力)
+    if (targetMode === 'STEAM') {
+        xLabel = "饱和蒸汽压力 (MPa,a)";
+        chartTitle = `蒸汽工况 COP 趋势 (热源 ${tSource}°C, η=${etaDisplay})`;
         
-        for (let t = -20; t <= 20; t += 2) {
-            labels.push(t);
-            // 计算：热源变，供水不变
-            const res = calculateHeatPumpCycle(t, tSupply, Module);
+        // 扫描范围: 0.1 MPa ~ 1.2 MPa (覆盖常见工业低压蒸汽)
+        for (let p = 0.1; p <= 1.2; p += 0.1) {
+            let val = parseFloat(p.toFixed(1));
+            labels.push(val);
+            
+            const res = calculateProcessCycle({ 
+                mode: 'STEAM', 
+                sourceTemp: tSource, 
+                targetVal: val,
+                perfectionDegree: perfectionDegree // 关键：传入用户设定的完善度
+            });
             dataCOP.push(res.error ? null : res.cop);
         }
 
-    } else {
-        // [模式 B] 余热耦合：X轴 = 目标供水温度 (45 ~ 85)
-        // 因为热源是恒定的 (35度)，分析随供水温度升高的性能衰减更有意义
+    } 
+    // 场景 2: 热水 + 余热模式 (X轴 = 供水温度)
+    else if (topology === 'COUPLED') {
         xLabel = "目标供水温度 (°C)";
-        chartTitle = `COP 趋势 (固定热源 ${SYSTEM_CONFIG.wasteHeatTemp}°C)`;
+        chartTitle = `余热提温 COP 趋势 (热源 ${tSource}°C, η=${etaDisplay})`;
         
-        for (let t = 45; t <= 85; t += 5) {
+        // 扫描范围: 45°C ~ 95°C
+        for (let t = 45; t <= 95; t += 5) {
             labels.push(t);
-            // 计算：热源不变(35)，供水变(t)
-            const res = calculateHeatPumpCycle(SYSTEM_CONFIG.wasteHeatTemp, t, Module);
+            const res = calculateProcessCycle({ 
+                mode: 'WATER', 
+                sourceTemp: tSource, 
+                targetVal: t,
+                perfectionDegree: perfectionDegree 
+            });
+            dataCOP.push(res.error ? null : res.cop);
+        }
+
+    } 
+    // 场景 3: 热水 + 环境源模式 (X轴 = 环境温度)
+    else {
+        xLabel = "室外环境温度 (°C)";
+        chartTitle = `环境温变 COP 趋势 (供水 ${tCurrentTarget}°C, η=${etaDisplay})`;
+        
+        // 扫描范围: -25°C ~ 25°C
+        for (let t = -25; t <= 25; t += 5) {
+            labels.push(t);
+            const res = calculateProcessCycle({ 
+                mode: 'WATER', 
+                sourceTemp: t, 
+                targetVal: tCurrentTarget,
+                perfectionDegree: perfectionDegree
+            });
             dataCOP.push(res.error ? null : res.cop);
         }
     }
 
-    // --- 绘制图表 ---
+    // --- 绘图配置 ---
     chartInstance = new Chart(ctx, {
         type: 'line',
         data: {
             labels: labels,
             datasets: [{
-                label: '系统 COP',
+                label: `COP (η=${etaDisplay})`,
                 data: dataCOP,
-                borderColor: topology === 'COUPLED' ? 'rgb(147, 51, 234)' : 'rgb(59, 130, 246)', // 紫色 vs 蓝色
-                backgroundColor: topology === 'COUPLED' ? 'rgba(147, 51, 234, 0.1)' : 'rgba(59, 130, 246, 0.1)',
+                // 根据模式自动切换颜色风格
+                borderColor: targetMode === 'STEAM' ? 'rgb(236, 72, 153)' : 'rgb(79, 70, 229)', // 粉色(蒸汽) vs 紫色(热水)
+                backgroundColor: targetMode === 'STEAM' ? 'rgba(236, 72, 153, 0.1)' : 'rgba(79, 70, 229, 0.1)',
                 borderWidth: 3,
-                tension: 0.3,
+                tension: 0.4, // 曲线更平滑
                 fill: true,
                 pointRadius: 4,
-                pointHoverRadius: 6
+                pointHoverRadius: 7
             }]
         },
         options: {
             responsive: true,
             maintainAspectRatio: false,
+            interaction: {
+                mode: 'index',
+                intersect: false,
+            },
             plugins: {
                 title: {
                     display: true,
                     text: chartTitle,
-                    font: { size: 16, weight: 'bold' },
-                    color: '#334155'
+                    font: { size: 14, weight: 'bold' },
+                    color: '#475569'
                 },
-                legend: { display: false },
+                legend: { display: false }, // 保持简洁，隐藏图例
                 tooltip: {
+                    backgroundColor: 'rgba(15, 23, 42, 0.9)',
+                    padding: 10,
+                    cornerRadius: 8,
                     callbacks: {
                         label: (ctx) => `COP: ${ctx.raw}`
                     }
@@ -94,8 +138,8 @@ export function updateChart(topology, tInput, tSupply, Module) {
                 },
                 y: {
                     title: { display: true, text: '性能系数 (COP)', color: '#64748b' },
-                    grid: { color: '#f1f5f9' },
-                    min: 1.0
+                    grid: { borderDash: [2, 2], color: '#e2e8f0' },
+                    min: 1.0 // COP 物理底线
                 }
             }
         }

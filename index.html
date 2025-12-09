@@ -4,7 +4,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>工业级多能源耦合系统仿真</title>
+  <title>工业综合能源系统仿真 (IES Simulation)</title>
 </head>
 
 <body class="bg-slate-50 text-slate-800 antialiased font-sans">
@@ -16,8 +16,8 @@
         <h1 class="text-xl font-bold tracking-wide">工业综合能源系统仿真 (IES Simulation)</h1>
       </div>
       <div class="flex items-center gap-4">
-        <span class="text-xs text-slate-400">Core: CoolProp WASM</span>
-        <span class="text-xs bg-indigo-600 px-3 py-1 rounded-full font-mono">v2.0 Industrial</span>
+        <span class="text-xs text-slate-400">Core: Process Model</span>
+        <span class="text-xs bg-indigo-500 px-3 py-1 rounded-full font-mono">v6.4 Dashboard</span>
       </div>
     </div>
   </header>
@@ -28,96 +28,194 @@
 
       <div class="lg:col-span-4 space-y-6">
 
-        <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-          <h2 class="text-sm font-bold text-slate-500 uppercase tracking-wider mb-4 border-b pb-2">
-            🔌 系统拓扑结构 (Topology)
+        <div class="bg-white p-5 rounded-xl shadow-sm border border-slate-200">
+          <h2 class="text-xs font-bold text-slate-500 uppercase tracking-wider mb-4 border-b pb-2">
+            🔌 方案对比模式 (Comparison Mode)
           </h2>
-
           <div class="space-y-4">
             <div>
-              <label class="block text-sm font-medium text-slate-700 mb-2">选择耦合模式</label>
+              <label class="block text-sm font-medium text-slate-700 mb-2">投资方案场景</label>
               <select id="select-topology"
-                class="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-slate-700 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition">
-                <option value="PARALLEL">方案 A: 传统解耦 (环境源 + 锅炉)</option>
-                <option value="COUPLED">方案 B: 余热耦合 (余热源 + 锅炉)</option>
+                class="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-slate-700 focus:ring-2 focus:ring-indigo-500 transition">
+                <option value="PARALLEL">方案 A: 空气源热泵 VS 传统锅炉</option>
+                <option value="COUPLED">方案 B: 余热水源热泵 VS 传统锅炉</option>
               </select>
-
               <div id="diagram-container"
-                class="mt-4 h-40 w-full bg-slate-50 rounded border border-slate-100 flex items-center justify-center text-slate-400 text-xs">
-                System Diagram Init...
+                class="mt-4 h-32 w-full bg-slate-50 rounded border border-slate-100 flex items-center justify-center text-slate-400 text-xs">
+                Diagram Init...
               </div>
             </div>
           </div>
         </div>
 
-        <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-          <h2 class="text-sm font-bold text-slate-500 uppercase tracking-wider mb-4 border-b pb-2">
-            ⚙️ 运行工况 (Conditions)
+        <div class="bg-white p-5 rounded-xl shadow-sm border border-slate-200">
+          <h2 class="text-xs font-bold text-slate-500 uppercase tracking-wider mb-4 border-b pb-2">
+            ⚙️ 工艺需求 (Process Demand)
           </h2>
 
-          <div class="space-y-5">
+          <div class="space-y-4">
+            <div>
+              <div class="flex bg-slate-100 p-1 rounded-lg">
+                <button id="btn-mode-water" class="flex-1 py-1.5 text-xs font-bold rounded-md shadow bg-white text-indigo-600 transition">
+                  热水 (Water)
+                </button>
+                <button id="btn-mode-steam" class="flex-1 py-1.5 text-xs font-bold rounded-md text-slate-500 hover:text-slate-700 transition">
+                  蒸汽 (Steam)
+                </button>
+              </div>
+              <input type="hidden" id="input-target-mode" value="WATER">
+            </div>
+
             <div class="relative">
-              <label id="label-source-temp" class="block text-sm font-medium text-slate-700 mb-1">室外干球温度 (°C)</label>
-              <div class="flex items-center">
-                <input type="number" id="input-temp-source" value="-5"
-                  class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none transition font-mono text-slate-700">
-                <span class="absolute right-3 text-slate-400 text-sm">°C</span>
-              </div>
-            </div>
-
-            <div>
-              <label class="block text-sm font-medium text-slate-700 mb-1">目标供水温度 (°C)</label>
+              <label id="label-source-temp" class="block text-xs font-medium text-slate-700 mb-1">室外干球温度</label>
               <div class="relative">
-                <input type="number" id="input-temp-supply" value="60"
-                  class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none transition font-mono text-slate-700">
-                <span class="absolute right-3 text-slate-400 text-sm">°C</span>
+                <input type="number" id="input-temp-source" value="-5"
+                  class="w-full pl-3 pr-16 py-1.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none font-mono text-slate-700">
+                <span class="absolute right-3 top-1.5 text-slate-400 text-xs pointer-events-none bg-white pl-1">°C</span>
               </div>
             </div>
 
             <div>
-              <label class="block text-sm font-medium text-slate-700 mb-1">设计热负荷 (kW)</label>
+              <label id="label-target-val" class="block text-xs font-medium text-slate-700 mb-1">目标供水温度</label>
+              <div class="relative">
+                <input type="number" id="input-target-val" value="60" step="1"
+                  class="w-full pl-3 pr-20 py-1.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none font-mono text-slate-700 font-bold">
+                <span id="unit-target-val" class="absolute right-3 top-1.5 text-slate-400 text-xs pointer-events-none bg-white pl-1">°C</span>
+              </div>
+              <div id="steam-info-box" class="hidden mt-1 p-1.5 bg-indigo-50 rounded border border-indigo-100 text-[10px] text-indigo-700 flex justify-between items-center">
+                <span>饱和温度:</span>
+                <span class="font-mono font-bold" id="res-sat-temp">-- °C</span>
+              </div>
+            </div>
+
+            <div>
+              <label class="block text-xs font-medium text-slate-700 mb-1">设计热负荷</label>
               <div class="relative">
                 <input type="number" id="input-load" value="2000"
-                  class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none transition font-mono text-slate-700">
-                <span class="absolute right-3 text-slate-400 text-sm">kW</span>
+                  class="w-full pl-3 pr-16 py-1.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none font-mono text-slate-700">
+                <span class="absolute right-3 top-1.5 text-slate-400 text-xs pointer-events-none bg-white pl-1">kW</span>
+              </div>
+            </div>
+
+            <div>
+              <label class="block text-xs font-medium text-slate-700 mb-1">年运行小时数 (Hours/Year)</label>
+              <div class="relative">
+                <input type="number" id="input-annual-hours" value="6000" step="100" max="8760"
+                  class="w-full pl-3 pr-16 py-1.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none font-mono text-slate-700">
+                <span class="absolute right-3 top-1.5 text-slate-400 text-xs pointer-events-none bg-white pl-1">hr</span>
               </div>
             </div>
           </div>
         </div>
 
-        <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-          <h2 class="text-sm font-bold text-slate-500 uppercase tracking-wider mb-4 border-b pb-2">
-            💰 能源经济性 (Economics)
-          </h2>
+        <details class="group bg-slate-50 p-4 rounded-xl border border-slate-200 open:bg-white open:shadow-sm open:ring-1 open:ring-slate-200 transition-all duration-300">
+          <summary class="flex items-center justify-between cursor-pointer list-none text-xs font-bold text-slate-600">
+            <div class="flex items-center gap-2">
+              <span>🛠️ 高级参数 & 物性 (Advanced)</span>
+            </div>
+            <span class="transform group-open:rotate-180 transition-transform duration-200 text-slate-400">▼</span>
+          </summary>
+          
+          <div class="mt-4 space-y-4 border-t border-slate-100 pt-4">
+            
+            <div>
+              <div class="flex justify-between items-center mb-1">
+                  <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-wide">热泵完善度 (η)</label>
+                  <div class="flex items-center gap-2">
+                     <input type="checkbox" id="chk-manual-cop" class="rounded text-indigo-600 focus:ring-indigo-500 w-3 h-3">
+                     <label for="chk-manual-cop" class="text-[10px] text-slate-500">锁定COP</label>
+                  </div>
+              </div>
+              
+              <div class="grid grid-cols-2 gap-2">
+                <select id="sel-perfection" class="w-full px-2 py-1 text-xs border border-slate-300 rounded focus:ring-1 focus:ring-indigo-500">
+                    <option value="0.40">一般 (0.40)</option>
+                    <option value="0.45" selected>标准 (0.45)</option>
+                    <option value="0.55">高效 (0.55)</option>
+                    <option value="CUSTOM">自定义</option>
+                </select>
+                <input type="number" id="inp-manual-cop" value="3.5" step="0.1" disabled placeholder="COP"
+                    class="w-full px-2 py-1 text-xs border border-slate-300 rounded bg-slate-100 font-mono disabled:text-slate-300 text-right pr-6">
+              </div>
+              <div id="box-perf-custom" class="hidden mt-2">
+                   <input type="number" id="inp-perfection-custom" value="0.50" step="0.01" max="1.0" placeholder="0.50"
+                    class="w-full px-2 py-1 text-xs border border-slate-300 rounded focus:ring-1 focus:ring-indigo-500 font-mono">
+              </div>
+            </div>
 
+            <div class="space-y-3 pt-2 border-t border-slate-100">
+                 <div class="relative">
+                   <label class="block text-[10px] text-slate-400 mb-1">热值 (LHV)</label>
+                   <div class="flex relative">
+                     <input type="number" id="inp-fuel-cal" value="10.0" step="0.1"
+                      class="w-full pl-2 pr-32 py-1 text-xs border border-slate-300 rounded focus:ring-1 focus:ring-indigo-500 font-mono">
+                     <div class="absolute right-1 top-0.5 bottom-0.5 flex items-center bg-slate-100 rounded border border-slate-200 px-1">
+                        <select id="sel-unit-cal" class="bg-transparent border-none text-[10px] text-slate-600 focus:ring-0 p-0 pr-1 cursor-pointer outline-none w-20">
+                            </select>
+                     </div>
+                   </div>
+                 </div>
+
+                 <div class="relative">
+                   <label class="block text-[10px] text-slate-400 mb-1">碳因子 (CO2)</label>
+                   <div class="flex relative">
+                     <input type="number" id="inp-fuel-co2" value="0.202" step="0.001"
+                      class="w-full pl-2 pr-32 py-1 text-xs border border-slate-300 rounded focus:ring-1 focus:ring-indigo-500 font-mono">
+                     <div class="absolute right-1 top-0.5 bottom-0.5 flex items-center bg-slate-100 rounded border border-slate-200 px-1">
+                        <select id="sel-unit-co2" class="bg-transparent border-none text-[10px] text-slate-600 focus:ring-0 p-0 pr-1 cursor-pointer outline-none w-20">
+                            </select>
+                     </div>
+                   </div>
+                 </div>
+
+                 <div class="relative">
+                    <label class="block text-[10px] text-slate-400 mb-1">锅炉效率 (Efficiency)</label>
+                    <div class="relative">
+                        <input type="number" id="inp-fuel-eff" value="0.92" step="0.01" max="1.0"
+                         class="w-full pl-2 pr-24 py-1 text-xs border border-slate-300 rounded focus:ring-1 focus:ring-indigo-500 font-mono">
+                        <span class="absolute right-2 top-1 text-[10px] text-slate-400 pointer-events-none bg-white pl-1">Ratio (0-1)</span>
+                    </div>
+                 </div>
+            </div>
+
+          </div>
+        </details>
+
+        <div class="bg-white p-5 rounded-xl shadow-sm border border-slate-200">
+          <h2 class="text-xs font-bold text-slate-500 uppercase tracking-wider mb-4 border-b pb-2">
+            💰 经济基准 (Baseline)
+          </h2>
           <div class="space-y-4">
             <div>
-              <label class="block text-xs font-medium text-slate-500 mb-1">辅助燃料类型</label>
+              <label class="block text-xs font-medium text-slate-500 mb-1">对比燃料类型</label>
               <select id="select-fuel"
                 class="w-full px-2 py-1.5 text-sm border border-slate-300 rounded-md focus:ring-1 focus:ring-indigo-500">
                 <option value="NATURAL_GAS">天然气 (Natural Gas)</option>
                 <option value="COAL">动力煤 (Coal)</option>
+                <option value="DIESEL">0# 柴油 (Diesel)</option>
+                <option value="BIOMASS">生物质颗粒 (Biomass)</option>
+                <option value="STEAM_PIPE">管道蒸汽 (Pipeline Steam)</option>
                 <option value="ELECTRICITY">工业电直热 (Elec Heater)</option>
               </select>
             </div>
-
             <div class="grid grid-cols-2 gap-4">
               <div>
                 <label class="block text-xs text-slate-500 mb-1">电价 (CNY/kWh)</label>
-                <input type="number" id="input-elec-price" value="0.75" step="0.01"
-                  class="w-full px-2 py-1.5 text-sm border border-slate-300 rounded focus:ring-1 focus:ring-indigo-500 font-mono">
+                <div class="relative">
+                    <input type="number" id="input-elec-price" value="0.75" step="0.01"
+                    class="w-full pl-2 pr-12 py-1.5 text-sm border border-slate-300 rounded focus:ring-1 focus:ring-indigo-500 font-mono">
+                </div>
               </div>
               <div>
                 <label class="block text-xs text-slate-500 mb-1">燃料单价</label>
                 <div class="relative">
                   <input type="number" id="input-fuel-price" value="3.80" step="0.1"
-                    class="w-full px-2 py-1.5 text-sm border border-slate-300 rounded focus:ring-1 focus:ring-indigo-500 font-mono">
-                  <span id="label-fuel-unit" class="absolute right-2 top-1.5 text-xs text-slate-400">/m³</span>
+                    class="w-full pl-2 pr-16 py-1.5 text-sm border border-slate-300 rounded focus:ring-1 focus:ring-indigo-500 font-mono">
+                  <span id="label-fuel-unit" class="absolute right-2 top-1.5 text-xs text-slate-400 pointer-events-none">/unit</span>
                 </div>
               </div>
             </div>
           </div>
-
           <button id="btn-calculate"
             class="w-full mt-6 bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-4 rounded-lg transition shadow-md flex items-center justify-center gap-2">
             <span>🚀 运行仿真 (Simulate)</span>
@@ -127,62 +225,83 @@
 
       <div class="lg:col-span-8 space-y-6">
 
-        <div class="grid grid-cols-2 sm:grid-cols-4 gap-4">
-          <div class="bg-white p-4 rounded-xl shadow-sm border-t-4 border-emerald-500">
-            <div class="text-slate-400 text-xs uppercase font-bold tracking-wider">综合 COP</div>
-            <div class="mt-1 flex items-baseline gap-1">
-              <span class="text-3xl font-bold text-slate-800" id="res-cop">--</span>
-              <span class="text-sm text-emerald-600 font-medium">ratio</span>
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div class="bg-white p-4 rounded-xl shadow-sm border-l-4 border-indigo-500">
+                <div class="text-[10px] uppercase font-bold text-slate-400 tracking-wider">系统 COP</div>
+                <div class="text-3xl font-bold text-slate-800 mt-1" id="res-cop">--</div>
+                <div class="text-[10px] text-indigo-500 font-medium">Performance</div>
             </div>
-          </div>
+            <div class="bg-white p-4 rounded-xl shadow-sm border-l-4 border-blue-400">
+                <div class="text-[10px] uppercase font-bold text-slate-400 tracking-wider">系统温升 (Lift)</div>
+                <div class="flex items-baseline gap-1 mt-1">
+                    <span class="text-2xl font-bold text-slate-700" id="res-lift">--</span>
+                    <span class="text-xs text-slate-400">K</span>
+                </div>
+                <div class="text-[10px] text-blue-400 font-medium">Temp. Rise</div>
+            </div>
+            <div class="bg-white p-4 rounded-xl shadow-sm border-l-4 border-amber-400">
+                <div class="text-[10px] uppercase font-bold text-slate-400 tracking-wider">压缩比 (P.Ratio)</div>
+                <div class="text-2xl font-bold text-slate-700 mt-1" id="res-pratio">--</div>
+                <div class="text-[10px] text-amber-500 font-medium">Est. Ratio</div>
+            </div>
+            <div class="bg-white p-4 rounded-xl shadow-sm border-l-4 border-emerald-500">
+                <div class="text-[10px] uppercase font-bold text-slate-400 tracking-wider">碳减排率</div>
+                <div class="flex items-baseline gap-1 mt-1">
+                    <span class="text-2xl font-bold text-emerald-600" id="res-co2-red">--</span>
+                    <span class="text-xs text-slate-400">%</span>
+                </div>
+                <div class="text-[10px] text-emerald-600 font-medium">vs Baseline</div>
+            </div>
+        </div>
 
-          <div class="bg-white p-4 rounded-xl shadow-sm border-t-4 border-indigo-500">
-            <div class="text-slate-400 text-xs uppercase font-bold tracking-wider">热泵负荷占比</div>
-            <div class="mt-1 flex items-baseline gap-1">
-              <span class="text-3xl font-bold text-slate-800" id="res-ratio">--</span>
-              <span class="text-sm text-indigo-600 font-medium">%</span>
+        <div class="bg-white rounded-xl shadow-md border border-slate-200 overflow-hidden">
+            <div class="bg-slate-50 px-4 py-2 border-b border-slate-200 flex justify-between items-center">
+                <h3 class="text-xs font-bold text-slate-600 uppercase tracking-wide">💰 经济可行性分析 (Economic Feasibility)</h3>
+                <span class="text-[10px] text-slate-400">基于当前负荷</span>
             </div>
-          </div>
+            <div class="grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-slate-100">
+                
+                <div class="p-4 flex flex-col justify-center items-center text-center hover:bg-slate-50 transition">
+                    <div class="text-xs text-slate-400 mb-1">小时运行成本</div>
+                    <div class="text-2xl font-bold text-slate-700" id="res-cost">--</div>
+                    <div class="text-[10px] text-slate-400">CNY / hr</div>
+                </div>
 
-          <div class="bg-white p-4 rounded-xl shadow-sm border-t-4 border-amber-500">
-            <div class="text-slate-400 text-xs uppercase font-bold tracking-wider">小时能耗</div>
-            <div class="mt-1 flex items-baseline gap-1">
-              <span class="text-2xl font-bold text-slate-800" id="res-power">--</span>
-              <span class="text-xs text-slate-500 font-medium">kW / m³</span>
-            </div>
-          </div>
+                <div class="p-4 flex flex-col justify-center items-center text-center hover:bg-slate-50 transition">
+                    <div class="text-xs text-slate-400 mb-1">综合供热单价</div>
+                    <div class="text-2xl font-bold text-indigo-600" id="res-unit-cost">--</div>
+                    <div class="text-[10px] text-slate-400">CNY / kWh_heat</div>
+                </div>
 
-          <div class="bg-white p-4 rounded-xl shadow-sm border-t-4 border-rose-500">
-            <div class="text-slate-400 text-xs uppercase font-bold tracking-wider">运行成本</div>
-            <div class="mt-1 flex items-baseline gap-1">
-              <span class="text-sm text-slate-500">¥</span>
-              <span class="text-3xl font-bold text-slate-800" id="res-cost">--</span>
-              <span class="text-xs text-slate-500">/hr</span>
+                <div class="p-4 flex flex-col justify-center items-center text-center bg-emerald-50/50 hover:bg-emerald-50 transition">
+                    <div class="text-xs text-emerald-600 font-bold mb-1">预估年节省额</div>
+                    <div class="text-2xl font-bold text-emerald-600" id="res-annual-save">--</div>
+                    <div class="text-[10px] text-emerald-500">CNY / Year</div>
+                </div>
             </div>
-          </div>
         </div>
 
         <div class="bg-white p-6 rounded-xl shadow-md border border-slate-200">
           <div class="flex items-center justify-between mb-4">
-            <h3 class="text-lg font-bold text-slate-700">性能特性曲线 (Performance Curve)</h3>
-            <span class="text-xs text-slate-400 bg-slate-100 px-2 py-1 rounded">R134a Cycle</span>
+            <h3 class="text-sm font-bold text-slate-700">性能特性曲线 (Performance Curve)</h3>
+            <span class="text-[10px] text-slate-400 bg-slate-100 px-2 py-1 rounded">Carnot-Based Model</span>
           </div>
-          <div class="relative h-80 w-full">
+          <div class="relative h-64 w-full">
             <canvas id="performance-chart"></canvas>
           </div>
         </div>
 
-        <div class="bg-slate-900 rounded-xl shadow-md overflow-hidden flex flex-col h-64 border border-slate-700">
+        <div class="bg-slate-900 rounded-xl shadow-md overflow-hidden flex flex-col h-48 border border-slate-700">
           <div class="bg-slate-800 px-4 py-2 border-b border-slate-700 flex justify-between items-center">
-            <span class="text-xs font-mono text-slate-300">System Log / Console</span>
+            <span class="text-[10px] font-mono text-slate-300">System Log</span>
             <div class="flex gap-1.5">
-              <div class="w-2.5 h-2.5 rounded-full bg-red-500"></div>
-              <div class="w-2.5 h-2.5 rounded-full bg-yellow-500"></div>
-              <div class="w-2.5 h-2.5 rounded-full bg-green-500"></div>
+              <div class="w-2 h-2 rounded-full bg-red-500"></div>
+              <div class="w-2 h-2 rounded-full bg-yellow-500"></div>
+              <div class="w-2 h-2 rounded-full bg-green-500"></div>
             </div>
           </div>
-          <div id="system-log" class="p-4 font-mono text-xs text-green-400 overflow-y-auto flex-1 space-y-1">
-            <div>> Initializing System Kernel... [OK]</div>
+          <div id="system-log" class="p-4 font-mono text-[10px] text-green-400 overflow-y-auto flex-1 space-y-1">
+            <div>> Initializing v6.4 Dashboard... [OK]</div>
             <div>> Waiting for user input...</div>
           </div>
         </div>
@@ -192,27 +311,16 @@
   </main>
 
   <script type="module">
-    // 这里的路径保持不变，因为我们没有动文件位置
     import createCoolProp from '/src/coolprop.js';
-
-    const config = {
-      locateFile: (path) => './coolprop.wasm'
-    };
-
-    console.log("正在初始化 CoolProp...");
-
+    const config = { locateFile: (path) => './coolprop.wasm' };
     createCoolProp(config)
       .then(instance => {
         window.Module = instance;
         console.log("✅ CoolProp Loaded.");
-        document.dispatchEvent(new Event('coolprop-ready'));
       })
-      .catch(err => {
-        console.error("❌ Load Failed:", err);
-      });
+      .catch(err => console.error("CoolProp Load Error:", err));
   </script>
 
   <script type="module" src="/src/main.js"></script>
 </body>
-
 </html>
