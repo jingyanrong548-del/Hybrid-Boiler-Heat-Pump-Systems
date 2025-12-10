@@ -1,4 +1,4 @@
-// src/logic.js - v8.1 Fixed (Logic Priority Fix)
+// src/logic.js - v8.1.2 Fixed (Capacity Breakdown & Low Temp Check)
 
 export const SYSTEM_CONFIG = {
     wasteHeatTemp: 35.0, 
@@ -68,19 +68,10 @@ function estimateEnthalpy(tempC, isSteam = false) {
     }
 }
 
+// 🟢 蒸吨换算逻辑：强制应用行业通用规则：1 Ton/h ≈ 700 kW
 export function convertSteamTonsToKW(tons, targetVal, mode, tLoadIn) {
     if (tons <= 0) return 0;
-    let h_out = 0;
-    if (mode === 'STEAM') {
-        const satTemp = getSatTempFromPressure(targetVal);
-        h_out = estimateEnthalpy(satTemp, true);
-    } else {
-        h_out = estimateEnthalpy(targetVal, false);
-    }
-    const h_in = estimateEnthalpy(tLoadIn, false);
-    const massFlow_kg_s = (tons * 1000) / 3600;
-    const kw = massFlow_kg_s * (h_out - h_in);
-    return parseFloat(kw.toFixed(1));
+    return parseFloat((tons * 700.0).toFixed(1));
 }
 
 export function calculateProcessCycle(params) {
@@ -115,7 +106,6 @@ export function calculateProcessCycle(params) {
     }
 }
 
-// 🟢 修复核心：calculateFlueGasRecovery (增加 targetMode 判断)
 export function calculateFlueGasRecovery(params) {
     const { 
         loadKW, boilerEff, fuelType, 
@@ -124,7 +114,7 @@ export function calculateFlueGasRecovery(params) {
         perfectionDegree,
         steamStrategy, 
         tLoadIn, tLoadOut,
-        targetMode // 🟢 必须接收 targetMode
+        targetMode 
     } = params;
     
     const eta = perfectionDegree || 0.45;
@@ -148,22 +138,20 @@ export function calculateFlueGasRecovery(params) {
     }
     const qSourcePotential = sensiblePotential + latentPotential;
 
-    // 2. Sink Limit Calculation (修复分支逻辑)
+    // 2. Sink Limit Calculation
     let qSinkLimit = Infinity;
     let effectiveTargetT = targetWaterTemp;
     let loadFlow_kg_s = 0;
 
-    // 🟢 优先判断：如果是热水模式，SinkLimit 就是全负荷
+    // 热水模式下，SinkLimit 为全负荷
     if (targetMode === 'WATER') {
         qSinkLimit = loadKW; 
-        effectiveTargetT = tLoadOut; // 供水温度
-        // 估算流量供展示
+        effectiveTargetT = tLoadOut; 
         const h_out = estimateEnthalpy(tLoadOut, false);
         const h_in = estimateEnthalpy(tLoadIn, false);
         if ((h_out - h_in) > 0) loadFlow_kg_s = loadKW / (h_out - h_in);
 
     } else if (steamStrategy === 'STRATEGY_PRE') {
-        // 蒸汽 - 补水预热
         const h_steam = estimateEnthalpy(targetWaterTemp, true);
         const h_feed = estimateEnthalpy(tLoadIn, false);
         loadFlow_kg_s = loadKW / (h_steam - h_feed); 
@@ -173,7 +161,6 @@ export function calculateFlueGasRecovery(params) {
         effectiveTargetT = tLoadOut; 
 
     } else if (steamStrategy === 'STRATEGY_GEN') {
-        // 蒸汽 - 直产
         qSinkLimit = loadKW;
         effectiveTargetT = targetWaterTemp;
         const h_steam = estimateEnthalpy(targetWaterTemp, true);
@@ -193,12 +180,16 @@ export function calculateFlueGasRecovery(params) {
         if (exhaustOutActual > tExhaustIn) exhaustOutActual = tExhaustIn;
     }
 
-    // 5. COP
+    // 5. COP & Lift Calculation
     let cop = 0;
+    let lift = 0; 
+
     if (recoveryType === 'ELECTRIC_HP') {
-        const tEvap = exhaustOutActual + 8.0; // 使用反算后的实际排烟温度
+        const tEvap = exhaustOutActual + 8.0; 
         const tCond = effectiveTargetT + 5.0;
         
+        lift = tCond - tEvap; 
+
         if (tEvap >= tCond - 2) {
              cop = 20.0; 
         } else {
@@ -208,7 +199,6 @@ export function calculateFlueGasRecovery(params) {
             if (cop_carnot > 15) cop_carnot = 15;
             
             let liftPenalty = 1.0;
-            // 只有直产蒸汽才会有巨额温升惩罚
             if (targetMode === 'STEAM' && steamStrategy === 'STRATEGY_GEN' && (tCond - tEvap) > 80) {
                 liftPenalty = 0.85; 
             }
@@ -217,24 +207,24 @@ export function calculateFlueGasRecovery(params) {
             if (cop > 8.0) cop = 8.0;
         }
     } else {
+        // 吸收式
         if (targetMode === 'STEAM' && steamStrategy === 'STRATEGY_GEN') {
             cop = 1.45; 
         } else {
             cop = 1.70; 
         }
+        lift = 0; 
     }
 
     const driveInputKW = recoveredHeatActual / cop;
     let waterRecovery_kg_h = 0;
     if (exhaustOutActual < dbFuel.dewPoint) {
         if (latentPotential > 0) {
-             // 粗略按比例反推
              const ratio = recoveredHeatActual / qSourcePotential; 
              waterRecovery_kg_h = (latentPotential * ratio * 3600) / 2260; 
         }
     }
 
-    // 选型数据
     let finalLoadType = '热水 (Hot Water)';
     if (targetMode === 'STEAM') {
         if (steamStrategy === 'STRATEGY_GEN') finalLoadType = '蒸汽 (Steam)';
@@ -246,21 +236,38 @@ export function calculateFlueGasRecovery(params) {
         sourceIn: parseFloat(tExhaustIn.toFixed(1)),
         sourceOut: parseFloat(exhaustOutActual.toFixed(1)),
         sourceFlow: parseFloat(flueGasVol.toFixed(0)), 
-        
         loadType: finalLoadType,
         loadIn: tLoadIn,   
         loadOut: effectiveTargetT, 
         capacity: parseFloat(recoveredHeatActual.toFixed(0))
     };
 
+    // 🟢 新增：计算蒸吨拆解 (Ton/h)
+    // 强制使用 1t = 700kW 规则
+    const tonsTotal = loadKW / 700.0;
+    const tonsHP = recoveredHeatActual / 700.0;
+    const tonsBoiler = tonsTotal - tonsHP;
+    
+    const tonData = {
+        total: parseFloat(tonsTotal.toFixed(2)),
+        hp: parseFloat(tonsHP.toFixed(2)),
+        boiler: parseFloat(tonsBoiler.toFixed(2))
+    };
+
+    // 🟢 新增：检测是否为低温排烟工况 (用于前端提示)
+    const isLowTempExhaust = tExhaustIn < 90.0;
+
     return {
         recoveredHeat: recoveredHeatActual, 
         driveEnergy: driveInputKW,          
         cop: parseFloat(cop.toFixed(2)),
+        lift: parseFloat(lift.toFixed(1)), 
         waterRecovery: parseFloat((waterRecovery_kg_h / 1000).toFixed(2)), 
         exhaustOutActual: parseFloat(exhaustOutActual.toFixed(1)),
         sinkLimited: (qSourcePotential > qSinkLimit),
-        reqData: reqData
+        reqData: reqData,
+        tonData: tonData,           // 🟢 透传蒸吨数据
+        isLowTempExhaust: isLowTempExhaust // 🟢 透传低温标记
     };
 }
 
@@ -274,7 +281,7 @@ export function calculateHybridStrategy(params) {
         perfectionDegree,
         steamStrategy, 
         tLoadIn, tLoadOut,
-        targetMode // 🟢 必须接收 targetMode
+        targetMode 
     } = params;
     
     const dbFuel = FuelDatabase[fuelTypeKey] || FuelDatabase['NATURAL_GAS'];
@@ -299,7 +306,7 @@ export function calculateHybridStrategy(params) {
             perfectionDegree,
             steamStrategy, 
             tLoadIn, tLoadOut,
-            targetMode // 🟢 透传
+            targetMode 
         });
 
         const savedFuelCost = (recRes.recoveredHeat / activeEff / activeCalVal) * fuelPrice;
@@ -332,6 +339,7 @@ export function calculateHybridStrategy(params) {
         return {
             mode: `余热回收 (${recoveryType === 'ELECTRIC_HP' ? 'MVR' : 'ABS'})`,
             activeCop: recRes.cop,
+            lift: recRes.lift, 
             hpRatio: (recRes.recoveredHeat / loadKW * 100).toFixed(1),
             powerKW: recRes.driveEnergy,
             cost: newCost,
@@ -348,11 +356,13 @@ export function calculateHybridStrategy(params) {
             sinkLimited: recRes.sinkLimited,
             reqData: recRes.reqData,
             
+            tonData: recRes.tonData, // 🟢 透传
+            isLowTempExhaust: recRes.isLowTempExhaust, // 🟢 透传
+            
             comparison: { hpCost: 0, boilerCost: baselineCost, hpCo2: 0, boilerCo2: baselineCo2 }
         };
 
     } else {
-        // ... (方案 A/B 保持不变) ...
         const activeCop = (manualCop > 0) ? manualCop : cop;
         const hpPower = loadKW / activeCop;
         const costHP = hpPower * elecPrice;

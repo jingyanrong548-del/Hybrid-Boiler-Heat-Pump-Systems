@@ -1,7 +1,7 @@
-// src/chartHelper.js - v7.9 Visualization Engine
+// src/chartHelper.js - v8.1.1 Fixed (Logic Synced)
 
 import Chart from 'chart.js/auto';
-import { calculateProcessCycle } from './logic.js';
+import { calculateProcessCycle, getSatTempFromPressure } from './logic.js';
 
 let chartInstance = null;
 
@@ -16,12 +16,16 @@ export function updateChart(topology, targetMode, tSource, tCurrentTarget, perfe
     let xLabel = "";
     let chartTitle = "";
     
-    // 🟢 确保完善度有默认值
+    // 🟢 1. 确保完善度与主逻辑一致
     const eta = perfectionDegree || 0.45;
     const etaDisplay = eta.toFixed(2);
 
-    // tCurrentTarget 在 main.js 中已经被转换为“真实温度”（即便是蒸汽模式，这里收到的也是饱和温度）
-    // 这对于 Recovery 模式至关重要，因为 Recovery 模式的 X 轴是排烟温度，Y 轴计算依赖这个固定的 tCurrentTarget
+    // 🟢 2. 获取 UI 上的目标排烟温度 (用于对齐主逻辑)
+    const domFlueOut = document.getElementById('input-flue-temp-out');
+    const targetExhaustOut = domFlueOut ? parseFloat(domFlueOut.value) : 40;
+
+    // tCurrentTarget 在 main.js 中已经被转换为“真实温度”
+    // (蒸汽模式下为饱和温度，热水模式下为供水温度)
 
     if (topology === 'RECOVERY') {
         xLabel = "初始排烟温度 (Exhaust In, °C)";
@@ -31,38 +35,51 @@ export function updateChart(topology, targetMode, tSource, tCurrentTarget, perfe
         
         chartTitle = `余热回收性能: ${techName} (${targetDesc}, η=${etaDisplay})`;
 
+        // 绘制排烟温度从 60°C 到 180°C 的 COP 趋势
         for (let tIn = 60; tIn <= 180; tIn += 10) {
             labels.push(tIn);
             
             if (recoveryType === 'ABSORPTION_HP') {
-                // 吸收式 COP 相对恒定，但如果是产蒸汽，效率略低
+                // 吸收式 COP 相对恒定
                 const baseCop = (targetMode === 'STEAM') ? 1.45 : 1.70;
                 dataCOP.push(baseCop); 
             } else {
-                // 电动式计算
-                const tOutFixed = 40; 
-                const tEvap = tOutFixed + 8.0; // 锚定在 48°C (假设中间回路)
-                const tCond = tCurrentTarget + 5;
+                // 电动式计算 - 🟢 核心修正：对齐 logic.js 算法
                 
-                // 物理硬约束检查：蒸发必须低于冷凝
+                // 1. 确定实际排烟出口温度
+                // 如果入口温度低于设定的目标出口(例如 40)，则实际出口只能是入口温度(无法回收)
+                // 否则，按设定的目标出口计算(模拟设计点性能，不考虑 SinkLimited)
+                let tOutActual = targetExhaustOut;
+                if (tIn < tOutActual) tOutActual = tIn - 5; 
+
+                // 2. 确定蒸发与冷凝温度 (与 logic.js calculateFlueGasRecovery 保持公式一致)
+                // 逻辑假设：喷淋塔/中间回路使得蒸发温度略高于排烟出口 (Scrubber effect)
+                const tEvap = tOutActual + 8.0; 
+                const tCond = tCurrentTarget + 5.0;
+                
+                // 3. 物理硬约束
                 if (tEvap >= tCond - 2) { 
-                    dataCOP.push(null);
+                    dataCOP.push(null); // 无法制热
                 } else {
                     const tk_evap = tEvap + 273.15;
                     const tk_cond = tCond + 273.15;
                     let cop_carnot = tk_cond / (tk_cond - tk_evap);
                     
-                    // 限制保持 15 (防止低温差数值爆炸)
+                    // 限制 Carnot 极值
                     if (cop_carnot > 15) cop_carnot = 15;
                     
-                    // 高温升惩罚 (如果是蒸汽模式，温升通常很大)
+                    // 4. 温升惩罚 (Lift Penalty) - 仅在大温升蒸汽工况启用
                     let liftPenalty = 1.0;
                     if (targetMode === 'STEAM' && (tCond - tEvap) > 80) {
                         liftPenalty = 0.85; 
                     }
 
                     let real_cop = cop_carnot * eta * liftPenalty;
+                    
+                    // 5. 边界清洗
                     if (real_cop < 1) real_cop = 1;
+                    if (real_cop > 8) real_cop = 8; // 视觉截断
+                    
                     dataCOP.push(parseFloat(real_cop.toFixed(2)));
                 }
             }
@@ -76,7 +93,7 @@ export function updateChart(topology, targetMode, tSource, tCurrentTarget, perfe
         for (let p = 0.1; p <= 1.2; p += 0.1) {
             let val = parseFloat(p.toFixed(1));
             labels.push(val);
-            // 注意：这里传给 logic 的 targetVal 是压力，因为 calculateProcessCycle 内部会处理 STEAM 模式下的压力换算
+            // 直接调用 logic.js 的标准循环计算
             const res = calculateProcessCycle({ 
                 mode: 'STEAM', sourceTemp: tSource, targetVal: val, perfectionDegree: eta 
             });
@@ -109,8 +126,8 @@ export function updateChart(topology, targetMode, tSource, tCurrentTarget, perfe
     // 确定 Y 轴建议最大值，优化视觉体验
     let suggestedMax = undefined;
     if (topology === 'RECOVERY') {
-         if (recoveryType !== 'ABSORPTION_HP') suggestedMax = 8.0; // MVR 可能很高
-         else suggestedMax = 2.5; // 吸收式很低，压低坐标轴以便看清
+         if (recoveryType !== 'ABSORPTION_HP') suggestedMax = 8.0; 
+         else suggestedMax = 2.5; 
     }
 
     chartInstance = new Chart(ctx, {
@@ -120,13 +137,12 @@ export function updateChart(topology, targetMode, tSource, tCurrentTarget, perfe
             datasets: [{
                 label: 'COP',
                 data: dataCOP,
-                // 根据技术类型改变颜色：吸收式用橙色，MVR用绿色/蓝色
+                // 根据技术类型改变颜色
                 borderColor: (recoveryType === 'ABSORPTION_HP') ? '#f59e0b' : 
                              (topology === 'RECOVERY' ? '#10b981' : (targetMode === 'STEAM' ? 'rgb(236, 72, 153)' : 'rgb(79, 70, 229)')), 
                 backgroundColor: 'rgba(255, 255, 255, 0.0)',
                 borderWidth: 3,
                 tension: 0.4,
-                // 吸收式用虚线表示
                 borderDash: (recoveryType === 'ABSORPTION_HP') ? [5, 5] : [],
                 fill: false,
                 pointRadius: 4,

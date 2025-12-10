@@ -1,4 +1,4 @@
-// src/main.js - v8.1 Fixed (Pass Mode to Logic)
+// src/main.js - v8.1.2 Fixed (Capacity Breakdown & Warnings)
 
 import './style.css'
 import {
@@ -63,6 +63,8 @@ const dom = {
     selUnitCo2: document.getElementById('sel-unit-co2'),
     inpFuelEff: document.getElementById('inp-fuel-eff'),
     btnCalc: document.getElementById('btn-calculate'),
+    
+    // Result Dashboard Elements
     lblRes1: document.getElementById('lbl-res-1'),
     descRes1: document.getElementById('desc-res-1'),
     lblRes2: document.getElementById('lbl-res-2'),
@@ -78,6 +80,12 @@ const dom = {
     resUnitCost: document.getElementById('res-unit-cost'),
     resAnnualSave: document.getElementById('res-annual-save'),
     resPayback: document.getElementById('res-payback'),
+    
+    // 🟢 New Capacity Breakdown Elements (v8.1.2)
+    valCapTotal: document.getElementById('val-cap-total'),
+    valCapTon: document.getElementById('val-cap-ton'),
+    valCapBreakdown: document.getElementById('val-cap-breakdown'),
+
     log: document.getElementById('system-log'),
     btnGenReq: document.getElementById('btn-gen-req'),
     modalReq: document.getElementById('modal-requisition'),
@@ -187,11 +195,8 @@ dom.inpLoadIn.addEventListener('input', () => { if(dom.selLoadUnit.value==='TON'
 
 function updateLoadConversion() {
     const tons = parseFloat(dom.inpLoadTon.value) || 0;
-    const tgtVal = parseFloat(dom.inpTarget.value);
-    const mode = dom.inpMode.value;
-    const tLoadIn = parseFloat(dom.inpLoadIn.value) || 20;
-
-    const kw = convertSteamTonsToKW(tons, tgtVal, mode, tLoadIn);
+    // v8.1.1 Fixed: 强制使用 1t=700kW 规则，忽略焓差计算
+    const kw = convertSteamTonsToKW(tons); 
     dom.valLoadConv.innerText = kw.toLocaleString();
 }
 
@@ -304,8 +309,9 @@ dom.btnCalc.addEventListener('click', () => {
     let finalLoadKW = 0;
     if (dom.selLoadUnit.value === 'TON') {
         const tons = parseFloat(dom.inpLoadTon.value);
-        finalLoadKW = convertSteamTonsToKW(tons, tgtVal, mode, tLoadIn);
-        log(`⚡️ 负荷折算: ${tons} t/h ≈ ${finalLoadKW} kW`, 'info');
+        // v8.1.1 Fixed: 使用标准转换
+        finalLoadKW = convertSteamTonsToKW(tons);
+        log(`⚡️ 负荷折算 (Fixed): ${tons} t/h = ${finalLoadKW} kW`, 'info');
     } else {
         finalLoadKW = parseFloat(dom.inpLoad.value);
     }
@@ -352,7 +358,7 @@ dom.btnCalc.addEventListener('click', () => {
         steamStrategy: dom.selSteamStrat ? dom.selSteamStrat.value : 'STRATEGY_PRE',
         tLoadIn: tLoadIn,   
         tLoadOut: tLoadOut,
-        targetMode: mode // 🟢 关键修复：透传 targetMode
+        targetMode: mode 
     });
 
     currentResultStrategy = strat;
@@ -378,7 +384,8 @@ dom.btnCalc.addEventListener('click', () => {
             log(`✅ 热平衡: 排烟降至 ${strat.exhaustOutActual}°C`, 'eco');
         }
 
-        dom.resLift.innerText = strat.waterRecovery > 0 ? strat.waterRecovery.toFixed(2) : "0.0";
+        dom.resLift.innerText = (strat.lift !== undefined) ? strat.lift.toFixed(1) : "--";
+        if(dom.unitRes2) dom.unitRes2.innerText = "K";
 
         const baseEff = parseFloat(dom.inpFuelEff.value);
         const hpRatio = strat.hpRatio;
@@ -424,6 +431,33 @@ dom.btnCalc.addEventListener('click', () => {
         dom.btnGenReq.disabled = true;
         dom.btnGenReq.classList.add('opacity-50', 'cursor-not-allowed');
     }
+
+    // 🟢 v8.1.2 New: 产能拆解与警告显示
+    // 1. 更新总产能显示
+    if (dom.valCapTotal) {
+        dom.valCapTotal.innerText = finalLoadKW.toLocaleString();
+    }
+    // 2. 更新蒸吨拆解
+    if (dom.valCapBreakdown && strat.tonData) {
+        dom.valCapTon.innerText = strat.tonData.total.toFixed(1);
+        dom.valCapBreakdown.innerHTML = `
+            <div class="flex items-center gap-3 text-[10px] sm:text-xs">
+                <div class="flex items-center gap-1">
+                    <span class="w-2 h-2 rounded-full bg-slate-300"></span>
+                    <span class="text-slate-500 font-medium">Boiler: <b class="text-slate-700">${strat.tonData.boiler}</b> t/h</span>
+                </div>
+                <div class="flex items-center gap-1">
+                    <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
+                    <span class="text-emerald-600 font-medium">HP: <b class="text-emerald-700">${strat.tonData.hp}</b> t/h</span>
+                </div>
+            </div>
+        `;
+    }
+    // 3. 低温排烟警告
+    if (strat.isLowTempExhaust) {
+        log('⚠️ 检测到低温排烟 (<90°C)，建议将基准锅炉效率调至 >95%', 'warn');
+    }
+
 
     dom.resCost.innerText = strat.cost.toFixed(1);
     dom.resUnitCost.innerText = strat.unitCost.toFixed(3);
@@ -506,7 +540,7 @@ dom.btnCopyReq.addEventListener('click', () => {
 目标温度: ${d.loadOut.toFixed(1)} °C
 制热量需求: ${d.capacity.toLocaleString()} kW
 ---
-生成的选型建议 (v8.0 Professional)
+生成的选型建议 (v8.1.2 Patch)
     `.trim();
     
     navigator.clipboard.writeText(text).then(() => {
