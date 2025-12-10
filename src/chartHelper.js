@@ -1,4 +1,4 @@
-// src/chartHelper.js - v8.1.1 Fixed (Logic Synced)
+// src/chartHelper.js - v8.3.0 Fixed (Visual Cutoff for Steam)
 
 import Chart from 'chart.js/auto';
 import { calculateProcessCycle, getSatTempFromPressure } from './logic.js';
@@ -16,11 +16,11 @@ export function updateChart(topology, targetMode, tSource, tCurrentTarget, perfe
     let xLabel = "";
     let chartTitle = "";
     
-    // 🟢 1. 确保完善度与主逻辑一致
+    // 🟢 1. 确保完善度 (Efficiency) 与主逻辑一致
     const eta = perfectionDegree || 0.45;
     const etaDisplay = eta.toFixed(2);
 
-    // 🟢 2. 获取 UI 上的目标排烟温度 (用于对齐主逻辑)
+    // 🟢 2. 获取 UI 上的目标排烟温度 (用于对齐主逻辑的计算基准)
     const domFlueOut = document.getElementById('input-flue-temp-out');
     const targetExhaustOut = domFlueOut ? parseFloat(domFlueOut.value) : 40;
 
@@ -39,36 +39,39 @@ export function updateChart(topology, targetMode, tSource, tCurrentTarget, perfe
         for (let tIn = 60; tIn <= 180; tIn += 10) {
             labels.push(tIn);
             
+            // 🟢 v8.3.0 Visual Fix: 蒸汽模式下，排烟 < 70°C 无意义，不绘制曲线
+            // 这与 logic.js 中的物理截止逻辑保持一致
+            if (targetMode === 'STEAM' && tIn < 70) {
+                dataCOP.push(null); // 断点
+                continue;
+            }
+
             if (recoveryType === 'ABSORPTION_HP') {
                 // 吸收式 COP 相对恒定
                 const baseCop = (targetMode === 'STEAM') ? 1.45 : 1.70;
                 dataCOP.push(baseCop); 
             } else {
-                // 电动式计算 - 🟢 核心修正：对齐 logic.js 算法
+                // 电动式计算 - 对齐 logic.js 的算法
                 
-                // 1. 确定实际排烟出口温度
-                // 如果入口温度低于设定的目标出口(例如 40)，则实际出口只能是入口温度(无法回收)
-                // 否则，按设定的目标出口计算(模拟设计点性能，不考虑 SinkLimited)
+                // 1. 确定实际排烟出口温度假设
                 let tOutActual = targetExhaustOut;
-                if (tIn < tOutActual) tOutActual = tIn - 5; 
+                if (tIn < tOutActual + 5) tOutActual = tIn - 5; 
 
-                // 2. 确定蒸发与冷凝温度 (与 logic.js calculateFlueGasRecovery 保持公式一致)
-                // 逻辑假设：喷淋塔/中间回路使得蒸发温度略高于排烟出口 (Scrubber effect)
+                // 2. 确定蒸发与冷凝温度
                 const tEvap = tOutActual + 8.0; 
                 const tCond = tCurrentTarget + 5.0;
                 
-                // 3. 物理硬约束
+                // 3. 物理硬约束检查
                 if (tEvap >= tCond - 2) { 
-                    dataCOP.push(null); // 无法制热
+                    dataCOP.push(null); 
                 } else {
                     const tk_evap = tEvap + 273.15;
                     const tk_cond = tCond + 273.15;
                     let cop_carnot = tk_cond / (tk_cond - tk_evap);
                     
-                    // 限制 Carnot 极值
                     if (cop_carnot > 15) cop_carnot = 15;
                     
-                    // 4. 温升惩罚 (Lift Penalty) - 仅在大温升蒸汽工况启用
+                    // 4. 温升惩罚 (Lift Penalty) - 关键：必须与 Logic 层一致
                     let liftPenalty = 1.0;
                     if (targetMode === 'STEAM' && (tCond - tEvap) > 80) {
                         liftPenalty = 0.85; 
@@ -78,7 +81,7 @@ export function updateChart(topology, targetMode, tSource, tCurrentTarget, perfe
                     
                     // 5. 边界清洗
                     if (real_cop < 1) real_cop = 1;
-                    if (real_cop > 8) real_cop = 8; // 视觉截断
+                    if (real_cop > 8) real_cop = 8.0; 
                     
                     dataCOP.push(parseFloat(real_cop.toFixed(2)));
                 }
@@ -93,7 +96,6 @@ export function updateChart(topology, targetMode, tSource, tCurrentTarget, perfe
         for (let p = 0.1; p <= 1.2; p += 0.1) {
             let val = parseFloat(p.toFixed(1));
             labels.push(val);
-            // 直接调用 logic.js 的标准循环计算
             const res = calculateProcessCycle({ 
                 mode: 'STEAM', sourceTemp: tSource, targetVal: val, perfectionDegree: eta 
             });
@@ -101,6 +103,7 @@ export function updateChart(topology, targetMode, tSource, tCurrentTarget, perfe
         }
 
     } else if (topology === 'COUPLED') {
+        // 方案 B: 水源热泵提温 (X轴 = 供水温度)
         xLabel = "目标供水温度 (°C)";
         chartTitle = `余热提温 COP 趋势 (热源 ${tSource}°C, η=${etaDisplay})`;
         for (let t = 45; t <= 95; t += 5) {
@@ -112,6 +115,7 @@ export function updateChart(topology, targetMode, tSource, tCurrentTarget, perfe
         }
 
     } else {
+        // 方案 A: 空源 (X轴 = 环境温度)
         xLabel = "室外环境温度 (°C)";
         chartTitle = `环境温变 COP 趋势 (供水 ${tCurrentTarget}°C, η=${etaDisplay})`;
         for (let t = -40; t <= 40; t += 5) {
@@ -137,7 +141,6 @@ export function updateChart(topology, targetMode, tSource, tCurrentTarget, perfe
             datasets: [{
                 label: 'COP',
                 data: dataCOP,
-                // 根据技术类型改变颜色
                 borderColor: (recoveryType === 'ABSORPTION_HP') ? '#f59e0b' : 
                              (topology === 'RECOVERY' ? '#10b981' : (targetMode === 'STEAM' ? 'rgb(236, 72, 153)' : 'rgb(79, 70, 229)')), 
                 backgroundColor: 'rgba(255, 255, 255, 0.0)',

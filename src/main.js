@@ -1,4 +1,4 @@
-// src/main.js - v8.1.2 Fixed (Capacity Breakdown & Warnings)
+// src/main.js - v8.3.0 Fixed (UI Cleanup, Error Handling & UX)
 
 import './style.css'
 import {
@@ -81,7 +81,7 @@ const dom = {
     resAnnualSave: document.getElementById('res-annual-save'),
     resPayback: document.getElementById('res-payback'),
     
-    // 🟢 New Capacity Breakdown Elements (v8.1.2)
+    // Capacity Elements
     valCapTotal: document.getElementById('val-cap-total'),
     valCapTon: document.getElementById('val-cap-ton'),
     valCapBreakdown: document.getElementById('val-cap-breakdown'),
@@ -195,7 +195,6 @@ dom.inpLoadIn.addEventListener('input', () => { if(dom.selLoadUnit.value==='TON'
 
 function updateLoadConversion() {
     const tons = parseFloat(dom.inpLoadTon.value) || 0;
-    // v8.1.1 Fixed: 强制使用 1t=700kW 规则，忽略焓差计算
     const kw = convertSteamTonsToKW(tons); 
     dom.valLoadConv.innerText = kw.toLocaleString();
 }
@@ -205,11 +204,14 @@ function updateLoadUI() {
     const mode = dom.inpMode.value;
     const steamStrat = dom.selSteamStrat ? dom.selSteamStrat.value : 'STRATEGY_PRE';
 
+    // 🟢 v8.3.1 Fix: 根据方案类型调整输入面板逻辑
     if (topo === 'RECOVERY') {
+        // 方案 C: 烟气回收
         dom.panelStd.classList.add('hidden');
         dom.boxTargetStd.classList.add('hidden');
         dom.panelRec.classList.remove('hidden');
 
+        // 恢复默认设置，避免 UI 污染
         if (mode === 'WATER') {
             dom.lblLoadIn.innerText = "回水温度 (Return)";
             dom.lblLoadOut.innerText = "供水温度 (Supply)";
@@ -234,10 +236,24 @@ function updateLoadUI() {
             }
         }
     } else {
+        // 方案 A & B: 标准热泵模式
         dom.panelRec.classList.add('hidden');
         dom.panelStd.classList.remove('hidden');
         dom.boxTargetStd.classList.remove('hidden');
         dom.boxSteamStrat.classList.add('hidden');
+
+        // 🟢 v8.3.1 UX: 方案 A/B 区分显示 (标签 & 默认值)
+        if (topo === 'PARALLEL') {
+            // 方案 A: 空气源
+            dom.lblSource.innerText = "室外干球温度";
+            // 智能重置：如果还是余热的35度，切回气温
+            if (dom.inpSource.value == "35") dom.inpSource.value = "-5";
+        } else if (topo === 'COUPLED') {
+            // 方案 B: 余热源
+            dom.lblSource.innerText = "余热源入口温度";
+            // 智能重置：如果还是气温的-5度，切回余热
+            if (dom.inpSource.value == "-5") dom.inpSource.value = "35";
+        }
     }
     
     if (dom.selLoadUnit.value === 'TON') updateLoadConversion();
@@ -309,9 +325,8 @@ dom.btnCalc.addEventListener('click', () => {
     let finalLoadKW = 0;
     if (dom.selLoadUnit.value === 'TON') {
         const tons = parseFloat(dom.inpLoadTon.value);
-        // v8.1.1 Fixed: 使用标准转换
         finalLoadKW = convertSteamTonsToKW(tons);
-        log(`⚡️ 负荷折算 (Fixed): ${tons} t/h = ${finalLoadKW} kW`, 'info');
+        log(`⚡️ 负荷折算: ${tons} t/h = ${finalLoadKW} kW`, 'info');
     } else {
         finalLoadKW = parseFloat(dom.inpLoad.value);
     }
@@ -361,8 +376,27 @@ dom.btnCalc.addEventListener('click', () => {
         targetMode: mode 
     });
 
+    // 🟢 v8.3.0 Error Handling: 物理截止处理
+    if (strat.error) {
+        log(`❌ 仿真终止: ${strat.msg}`, 'error');
+        // 重置核心数据，防止误导
+        dom.resCop.innerText = "--";
+        dom.resLift.innerText = "--";
+        dom.resPer.innerText = "--";
+        dom.resCo2Red.innerText = "--";
+        dom.resCost.innerText = "--";
+        dom.resUnitCost.innerText = "--";
+        dom.resAnnualSave.innerText = "--";
+        dom.resPayback.innerText = "--";
+        
+        // 关键：清空拆解条
+        if(dom.valCapBreakdown) dom.valCapBreakdown.innerHTML = '';
+        return; 
+    }
+
     currentResultStrategy = strat;
 
+    // ... (渲染逻辑) ...
     let displayCop = 0;
     if (isManualCop && manualCopVal > 0) {
         displayCop = manualCopVal;
@@ -432,32 +466,37 @@ dom.btnCalc.addEventListener('click', () => {
         dom.btnGenReq.classList.add('opacity-50', 'cursor-not-allowed');
     }
 
-    // 🟢 v8.1.2 New: 产能拆解与警告显示
-    // 1. 更新总产能显示
+    // 更新总产能显示
     if (dom.valCapTotal) {
         dom.valCapTotal.innerText = finalLoadKW.toLocaleString();
     }
-    // 2. 更新蒸吨拆解
-    if (dom.valCapBreakdown && strat.tonData) {
-        dom.valCapTon.innerText = strat.tonData.total.toFixed(1);
-        dom.valCapBreakdown.innerHTML = `
-            <div class="flex items-center gap-3 text-[10px] sm:text-xs">
-                <div class="flex items-center gap-1">
-                    <span class="w-2 h-2 rounded-full bg-slate-300"></span>
-                    <span class="text-slate-500 font-medium">Boiler: <b class="text-slate-700">${strat.tonData.boiler}</b> t/h</span>
+    
+    // 🟢 v8.3.0 UI Fix: 产能拆解条 (仅 Recovery 模式显示，其他模式清空)
+    if (dom.valCapBreakdown) {
+        if (topo === 'RECOVERY' && strat.tonData) {
+            dom.valCapTon.innerText = strat.tonData.total.toFixed(1);
+            dom.valCapBreakdown.innerHTML = `
+                <div class="flex items-center gap-3 text-[10px] sm:text-xs">
+                    <div class="flex items-center gap-1">
+                        <span class="w-2 h-2 rounded-full bg-slate-300"></span>
+                        <span class="text-slate-500 font-medium">Boiler: <b class="text-slate-700">${strat.tonData.boiler}</b> t/h</span>
+                    </div>
+                    <div class="flex items-center gap-1">
+                        <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
+                        <span class="text-emerald-600 font-medium">HP: <b class="text-emerald-700">${strat.tonData.hp}</b> t/h</span>
+                    </div>
                 </div>
-                <div class="flex items-center gap-1">
-                    <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
-                    <span class="text-emerald-600 font-medium">HP: <b class="text-emerald-700">${strat.tonData.hp}</b> t/h</span>
-                </div>
-            </div>
-        `;
+            `;
+        } else {
+            // 方案 A/B 强制清空拆解条，防止界面污染
+            dom.valCapTon.innerText = (finalLoadKW / 700).toFixed(1);
+            dom.valCapBreakdown.innerHTML = '';
+        }
     }
-    // 3. 低温排烟警告
+
     if (strat.isLowTempExhaust) {
         log('⚠️ 检测到低温排烟 (<90°C)，建议将基准锅炉效率调至 >95%', 'warn');
     }
-
 
     dom.resCost.innerText = strat.cost.toFixed(1);
     dom.resUnitCost.innerText = strat.unitCost.toFixed(3);
@@ -540,7 +579,7 @@ dom.btnCopyReq.addEventListener('click', () => {
 目标温度: ${d.loadOut.toFixed(1)} °C
 制热量需求: ${d.capacity.toLocaleString()} kW
 ---
-生成的选型建议 (v8.1.2 Patch)
+生成的选型建议 (v8.3.1 Professional)
     `.trim();
     
     navigator.clipboard.writeText(text).then(() => {
@@ -549,5 +588,6 @@ dom.btnCopyReq.addEventListener('click', () => {
     });
 });
 
+// 初始化：设置标签
 setTargetMode('WATER');
-dom.selFuel.dispatchEvent(new Event('change'));
+updateLoadUI();

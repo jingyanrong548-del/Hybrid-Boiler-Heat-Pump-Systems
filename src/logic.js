@@ -1,4 +1,4 @@
-// src/logic.js - v8.1.2 Fixed (Capacity Breakdown & Low Temp Check)
+// src/logic.js - v8.3.0 Fixed (Steam Cutoff & Physical Limits)
 
 export const SYSTEM_CONFIG = {
     wasteHeatTemp: 35.0, 
@@ -117,6 +117,15 @@ export function calculateFlueGasRecovery(params) {
         targetMode 
     } = params;
     
+    // 🟢 v8.3.0 Fix: 蒸汽模式下，若排烟 < 70°C，触发物理截止
+    // 工程经验：此时锅炉必定已配备节能器，补水已被预热，无热泵接入点
+    if (targetMode === 'STEAM' && tExhaustIn < 70.0) {
+        return {
+            error: "PHYSICAL_LIMIT_STEAM",
+            msg: "排烟温度过低 (<70°C)，提示已安装节能器，无蒸汽热泵回收空间"
+        };
+    }
+
     const eta = perfectionDegree || 0.45;
 
     // 1. Source Potential
@@ -242,11 +251,9 @@ export function calculateFlueGasRecovery(params) {
         capacity: parseFloat(recoveredHeatActual.toFixed(0))
     };
 
-    // 🟢 新增：计算蒸吨拆解 (Ton/h)
-    // 强制使用 1t = 700kW 规则
     const tonsTotal = loadKW / 700.0;
     const tonsHP = recoveredHeatActual / 700.0;
-    const tonsBoiler = tonsTotal - tonsHP;
+    const tonsBoiler = Math.max(0, tonsTotal - tonsHP);
     
     const tonData = {
         total: parseFloat(tonsTotal.toFixed(2)),
@@ -254,7 +261,6 @@ export function calculateFlueGasRecovery(params) {
         boiler: parseFloat(tonsBoiler.toFixed(2))
     };
 
-    // 🟢 新增：检测是否为低温排烟工况 (用于前端提示)
     const isLowTempExhaust = tExhaustIn < 90.0;
 
     return {
@@ -266,8 +272,8 @@ export function calculateFlueGasRecovery(params) {
         exhaustOutActual: parseFloat(exhaustOutActual.toFixed(1)),
         sinkLimited: (qSourcePotential > qSinkLimit),
         reqData: reqData,
-        tonData: tonData,           // 🟢 透传蒸吨数据
-        isLowTempExhaust: isLowTempExhaust // 🟢 透传低温标记
+        tonData: tonData,           
+        isLowTempExhaust: isLowTempExhaust
     };
 }
 
@@ -308,6 +314,17 @@ export function calculateHybridStrategy(params) {
             tLoadIn, tLoadOut,
             targetMode 
         });
+
+        // 🟢 v8.3.0 Error Handling: 如果底层返回错误，向上透传
+        if (recRes.error) {
+            return {
+                error: recRes.error,
+                msg: recRes.msg,
+                mode: "N/A",
+                cost: 0, co2: 0, unitCost: 0, annualSaving: 0, 
+                paybackPeriod: 0, per: 0, hpRatio: 0
+            };
+        }
 
         const savedFuelCost = (recRes.recoveredHeat / activeEff / activeCalVal) * fuelPrice;
         
@@ -356,8 +373,8 @@ export function calculateHybridStrategy(params) {
             sinkLimited: recRes.sinkLimited,
             reqData: recRes.reqData,
             
-            tonData: recRes.tonData, // 🟢 透传
-            isLowTempExhaust: recRes.isLowTempExhaust, // 🟢 透传
+            tonData: recRes.tonData, 
+            isLowTempExhaust: recRes.isLowTempExhaust,
             
             comparison: { hpCost: 0, boilerCost: baselineCost, hpCo2: 0, boilerCo2: baselineCo2 }
         };
