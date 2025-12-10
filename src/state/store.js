@@ -3,51 +3,57 @@ import { TOPOLOGY, MODES, STRATEGIES, RECOVERY_TYPES } from '../core/constants.j
 
 // 初始状态定义
 const initialState = {
-    // 系统架构
-    topology: TOPOLOGY.RECOVERY, // 默认方案 C
+    // === 系统架构 ===
+    topology: TOPOLOGY.RECOVERY, // 默认方案 C (烟气回收)
     
-    // 核心参数
+    // === 核心工艺模式 ===
     mode: MODES.WATER,
     steamStrategy: STRATEGIES.PREHEAT,
     recoveryType: RECOVERY_TYPES.ABS, // 默认吸收式
     
-    // [v9.1 新增] 燃烧参数
-    excessAir: 1.20,         // 过量空气系数 (Alpha), 默认 1.2
+    // === 关键温度参数 (°C) ===
+    // 1. 热源侧
+    sourceTemp: 35.0,        // 方案 A/B: 环境/余热源入口温度 (In)
+    sourceOut: 30.0,         // [New] 方案 B: 余热源出口温度 (Out)
     
-    // 温度参数 (C)
-    sourceTemp: 35.0,        // 方案A/B 环境温度
-    targetTemp: 60.0,        // 目标供水/饱和温度
-    
-    // 余热回收专用
-    flueIn: 130.0,
-    flueOut: 40.0,
-    loadIn: 20.0,            // 补水/回水温度
-    loadOut: 90.0,           // 预热目标/供水温度
+    flueIn: 130.0,           // 方案 C: 初始排烟温度
+    flueOut: 40.0,           // 方案 C: 目标排烟温度
+    excessAir: 1.20,         // [v9.1] 燃烧过量空气系数 (Alpha)
 
-    // 高级参数: LHV, CO2 因子 (手动覆盖)
-    fuelCalValue: 10.0,      // LHV value (index.html default)
-    fuelCalUnit: 'MJ/kg',    // Placeholder unit
-    fuelCo2Value: 0.202,     // CO2 factor value (index.html default)
-    fuelCo2Unit: 'kgCO2/unit', // Placeholder unit
+    // 2. 热汇/负载侧
+    targetTemp: 60.0,        // 系统最终目标温度 (热水供水 / 蒸汽饱和温度)
     
-    // 负荷与效率
-    loadValue: 2000.0,       // kW
+    loadIn: 50.0,            // 方案 C: 补水/回水入口温度
+    loadOut: 70.0,           // 方案 C: 热泵预热目标/出口温度
+    
+    loadInStd: 50.0,         // [New] 方案 A/B: 专用的热汇入口温度 (回水/补水)
+
+    // === 负荷与效率 ===
+    loadValue: 2000.0,       // 设计热负荷 (kW)
     loadUnit: 'KW',          // KW | TON
-    loadValueTons: 2000.0 / 700.0, // 初始蒸吨值
+    loadValueTons: 2.86,     // (2000/700) 初始蒸吨值
     perfectionDegree: 0.45,  // 热力完善度
-    manualCop: 3.5,            // 手动COP值
-    isManualCop: false,      // 是否启用手动COP
     
-    // 经济性
+    // === [New] 手动 COP 控制 ===
+    isManualCop: false,      // 是否启用手动 COP 锁定
+    manualCop: 3.5,          // 手动 COP 值
+    
+    // === [New] 高级燃料参数 (覆盖默认值) ===
+    fuelCalValue: 10.0,      // 低位热值 (LHV)
+    fuelCalUnit: 'MJ/kg',    // LHV 单位 (仅用于 UI 显示和转换逻辑)
+    fuelCo2Value: 0.202,     // CO2 排放因子
+    fuelCo2Unit: 'kgCO2/unit', // CO2 单位
+    
+    // === 经济性参数 ===
     fuelType: 'NATURAL_GAS',
-    elecPrice: 0.75,
-    fuelPrice: 3.80,
-    annualHours: 6000,
-    boilerEff: 0.92,
+    elecPrice: 0.75,         // 电价 (元/kWh)
+    fuelPrice: 3.80,         // 燃料单价
+    annualHours: 6000,       // 年运行小时
+    boilerEff: 0.92,         // 锅炉效率
     
-    // 造价参数
-    capexHP: 2500,
-    capexBase: 200
+    // === 造价估算 ===
+    capexHP: 2500,           // 热泵单位造价 (元/kW)
+    capexBase: 200           // 锅炉单位造价 (元/kW)
 };
 
 class Store {
@@ -71,8 +77,7 @@ class Store {
         const prevState = { ...this.state };
         this.state = { ...this.state, ...partialState };
         
-        // 简单 Diff，如果有变化才通知
-        // (此处简化处理，实际只要调用就通知，确保 UI 响应)
+        // 只要状态更新就通知 UI 重绘
         this.notify(prevState);
     }
 

@@ -78,12 +78,30 @@
 
             <div id="panel-input-standard" class="space-y-4">
                 <div class="relative">
-                  <label id="label-source-temp" class="block text-xs font-medium text-slate-700 mb-1">室外干球温度</label>
+                  <label id="label-source-temp" class="block text-xs font-medium text-slate-700 mb-1">热源温度 (In)</label>
                   <div class="relative">
                     <input type="number" id="input-temp-source" value="-5" min="-40" max="40"
                       class="w-full pl-3 pr-16 py-1.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none font-mono text-slate-700">
-                    <span class="absolute right-6 top-1.5 text-slate-400 text-xs pointer-events-none bg-white pl-1">°C</span>
+                    <span id="unit-source-in" class="absolute right-6 top-1.5 text-slate-400 text-xs pointer-events-none bg-white pl-1">°C</span>
                   </div>
+                </div>
+                
+                <div id="box-source-out" class="relative hidden">
+                   <label id="label-source-out" class="block text-xs font-medium text-slate-700 mb-1">热源温度 (Out)</label>
+                   <div class="relative">
+                     <input type="number" id="input-temp-source-out" value="30" step="5"
+                        class="w-full pl-3 pr-16 py-1.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none font-mono text-slate-700">
+                     <span class="absolute right-6 top-1.5 text-slate-400 text-xs pointer-events-none bg-white pl-1">°C</span>
+                   </div>
+                </div>
+                
+                <div id="box-load-in-std">
+                   <label id="label-load-in-std" class="block text-xs font-medium text-slate-700 mb-1">热汇入口温度 (回水/补水)</label>
+                   <div class="relative">
+                      <input type="number" id="input-load-in-std" value="50"
+                         class="w-full pl-3 pr-16 py-1.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 font-mono text-slate-700">
+                      <span class="absolute right-6 top-1.5 text-slate-400 text-xs pointer-events-none bg-white pl-1">°C</span>
+                   </div>
                 </div>
             </div>
 
@@ -109,7 +127,7 @@
 
                 <div class="grid grid-cols-2 gap-3 pt-1">
                     <div class="relative">
-                         <label id="label-load-in" class="block text-[10px] font-bold text-orange-900 mb-1">入口/补水温度</label>
+                         <label id="label-load-in" class="block text-[10px] font-bold text-orange-900 mb-1">热汇/补水入口温度</label>
                          <div class="relative">
                             <input type="number" id="input-load-in" value="50"
                               class="w-full pl-2 pr-6 py-1.5 border border-orange-300 rounded focus:ring-1 focus:ring-orange-500 font-mono text-slate-800 text-xs bg-white">
@@ -117,7 +135,7 @@
                          </div>
                     </div>
                     <div class="relative">
-                         <label id="label-load-out" class="block text-[10px] font-bold text-orange-900 mb-1">出口/目标温度</label>
+                         <label id="label-load-out" class="block text-[10px] font-bold text-orange-900 mb-1">热泵出口/预热目标温度</label>
                          <div class="relative">
                             <input type="number" id="input-load-out" value="70"
                               class="w-full pl-2 pr-6 py-1.5 border border-orange-300 rounded focus:ring-1 focus:ring-orange-500 font-mono text-slate-800 text-xs bg-white font-bold">
@@ -144,7 +162,7 @@
             </div>
 
             <div id="box-target-std">
-              <label id="label-target-val" class="block text-xs font-medium text-slate-700 mb-1">目标供水/回水温度</label>
+              <label id="label-target-val" class="block text-xs font-medium text-slate-700 mb-1">热汇出口/饱和蒸汽压力</label>
               <div class="relative">
                 <input type="number" id="input-target-val" value="60" step="1"
                   class="w-full pl-3 pr-20 py-1.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none font-mono text-slate-700 font-bold">

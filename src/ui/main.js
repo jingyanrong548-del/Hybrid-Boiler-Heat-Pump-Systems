@@ -7,19 +7,17 @@ import { renderSystemDiagram } from './diagram.js';
 import { MODES, TOPOLOGY, STRATEGIES } from '../core/constants.js';
 import { getSatTempFromPressure, convertSteamTonsToKW } from '../core/physics.js';
 
-// === Unit Options for Advanced Parameters (FIXED: Unit Conversion) ===
+// === Unit Options for Advanced Parameters ===
 const CAL_UNIT_OPTIONS = [
-    // MJ/kg is arbitrary base (Factor=1.0)
     { value: 'MJ/kg', text: 'MJ/kg', factor: 1.0 },
-    { value: 'kWh/kg', text: 'kWh/kg', factor: 0.277778 }, // 1 kWh ≈ 3.6 MJ
+    { value: 'kWh/kg', text: 'kWh/kg', factor: 0.277778 }, 
     { value: 'MJ/m3', text: 'MJ/m³', factor: 1.0 },
     { value: 'kWh/m3', text: 'kWh/m³', factor: 0.277778 }
 ];
 
 const CO2_UNIT_OPTIONS = [
-    // kgCO2/unit is arbitrary base (Factor=1.0)
-    { value: 'kgCO2/unit', text: 'kg/Unit', factor: 1.0 }, // kg CO2 / kg Fuel or m3 Fuel
-    { value: 'kgCO2/kWh', text: 'kg/kWh', factor: 1.0 } // kg CO2 / kWh Heat Output
+    { value: 'kgCO2/unit', text: 'kg/Unit', factor: 1.0 }, 
+    { value: 'kgCO2/kWh', text: 'kg/kWh', factor: 1.0 } 
 ];
 
 function populateUnitSelect(selectEl, options, currentUnit) {
@@ -41,7 +39,6 @@ function findUnitFactor(unit, options) {
     return opt ? opt.factor : 1.0;
 }
 
-
 // === 1. DOM 元素映射 ===
 const ui = {
     topo: document.getElementById('select-topology'),
@@ -54,16 +51,29 @@ const ui = {
     boxTargetStd: document.getElementById('box-target-std'),
     boxSteamStrat: document.getElementById('box-steam-strategy'),
     
+    // 方案 A/B 热源输入
     inpSource: document.getElementById('input-temp-source'),
+    inpSourceOut: document.getElementById('input-temp-source-out'), 
+    boxSourceOut: document.getElementById('box-source-out'), 
+    unitSourceIn: document.getElementById('unit-source-in'), 
+    
+    // 方案 C 烟气输入
     inpFlueIn: document.getElementById('input-flue-temp-in'),
     inpFlueOut: document.getElementById('input-flue-temp-out'),
+    
+    // 方案 C 热汇输入
     inpLoadIn: document.getElementById('input-load-in'),
     inpLoadOut: document.getElementById('input-load-out'),
+    lblLoadIn: document.getElementById('label-load-in'),
+    lblLoadOut: document.getElementById('label-load-out'),
+    
+    // 方案 A/B 热汇输入
+    inpLoadInStd: document.getElementById('input-load-in-std'), 
+    boxLoadInStd: document.getElementById('box-load-in-std'), 
+
     selSteamStrat: document.getElementById('select-steam-strategy'),
     selRecType: document.getElementById('select-recovery-type'),
     inpPefElec: document.getElementById('inp-pef-elec'),
-    
-    // [v9.1 新增] 过量空气系数输入框
     inpExcessAir: document.getElementById('inp-excess-air'),
 
     inpTarget: document.getElementById('input-target-val'),
@@ -83,6 +93,7 @@ const ui = {
     inpFuelCo2: document.getElementById('inp-fuel-co2'),
     selUnitCo2: document.getElementById('sel-unit-co2'),
     inpFuelEff: document.getElementById('inp-fuel-eff'),
+    inpAnnualHours: document.getElementById('input-annual-hours'),
     
     inpLoad: document.getElementById('input-load'),
     inpLoadTon: document.getElementById('input-load-ton'),
@@ -106,7 +117,7 @@ const ui = {
     valCapTon: document.getElementById('val-cap-ton'),
     valCapBreakdown: document.getElementById('val-cap-breakdown'),
     
-    // 选型单相关的 DOM 元素
+    // 选型单 DOM
     btnGenReq: document.getElementById('btn-gen-req'),
     modalReq: document.getElementById('modal-requisition'),
     btnCloseModal: document.getElementById('btn-close-modal'),
@@ -122,7 +133,6 @@ const ui = {
     log: document.getElementById('system-log')
 };
 
-// 暂存选型数据
 let currentReqData = null;
 
 // === 2. 事件绑定 ===
@@ -130,20 +140,32 @@ function bindEvents() {
     ui.topo.addEventListener('change', (e) => {
         const newTopo = e.target.value;
         const updates = { topology: newTopo };
-        if (newTopo === TOPOLOGY.PARALLEL) updates.sourceTemp = -5.0;
-        else if (newTopo === TOPOLOGY.COUPLED) updates.sourceTemp = 35.0;
+        // 切换拓扑时，给予合理的默认值，但不强制覆盖用户可能已输入的高级参数
+        if (newTopo === TOPOLOGY.PARALLEL) updates.sourceTemp = -5.0; 
+        else if (newTopo === TOPOLOGY.COUPLED) updates.sourceTemp = 35.0; 
         store.setState(updates);
     });
 
+    // [修正] 模式切换逻辑：只改变模式和核心默认温度，避免全量重置
     ui.btnWater.addEventListener('click', () => {
         store.setState({ 
-            mode: MODES.WATER, targetTemp: 60.0, loadIn: 50.0, loadOut: 70.0
+            mode: MODES.WATER, 
+            targetTemp: 60.0, // 默认热水目标
+            // 只有当这些值明显不合理（例如是蒸汽的高温）时才重置
+            // 这里为了用户体验，我们提供一套标准热水工况默认值
+            loadIn: 50.0, 
+            loadOut: 70.0, 
+            loadInStd: 50.0 
         });
     });
 
     ui.btnSteam.addEventListener('click', () => {
         store.setState({ 
-            mode: MODES.STEAM, targetTemp: 0.5, loadIn: 20.0, loadOut: 90.0
+            mode: MODES.STEAM, 
+            targetTemp: 0.5, // 0.5 MPa
+            loadIn: 20.0,    // 补水通常较冷
+            loadOut: 90.0,   // 预热目标
+            loadInStd: 20.0
         });
     });
 
@@ -155,65 +177,62 @@ function bindEvents() {
         });
     };
 
+    // 核心输入绑定
     bindInput(ui.inpSource, 'sourceTemp');
+    bindInput(ui.inpSourceOut, 'sourceOut'); 
+    bindInput(ui.inpLoadInStd, 'loadInStd'); 
+
     bindInput(ui.inpFlueIn, 'flueIn');
     bindInput(ui.inpFlueOut, 'flueOut');
     bindInput(ui.inpLoadIn, 'loadIn');
     bindInput(ui.inpLoadOut, 'loadOut');
-    bindInput(ui.inpTarget, 'targetTemp');
-    bindInput(ui.inpLoad, 'loadValue'); // 直接绑定 kW 值
-    // ui.inpLoadTon 不再直接绑定 loadValueTons，而是通过 input 事件处理
 
-    bindInput(ui.inpPefElec, 'pefElec');
-    
-    // [v9.1 新增] 绑定过量空气系数
+    bindInput(ui.inpTarget, 'targetTemp');
+    bindInput(ui.inpLoad, 'loadValue'); 
+    bindInput(ui.inpAnnualHours, 'annualHours');
     bindInput(ui.inpExcessAir, 'excessAir');
     
-    if(ui.selSteamStrat) ui.selSteamStrat.addEventListener('change', (e) => store.setState({ steamStrategy: e.target.value }));
-    if(ui.selRecType) ui.selRecType.addEventListener('change', (e) => store.setState({ recoveryType: e.target.value }));
-
-    // 【高级参数绑定修复】
+    // 高级参数绑定
     bindInput(ui.inpFuelCal, 'fuelCalValue');
     bindInput(ui.inpFuelCo2, 'fuelCo2Value');
     bindInput(ui.inpFuelEff, 'boilerEff');
     bindInput(ui.inpPefElec, 'pefElec');
     bindInput(ui.inpPerfectionCustom, 'perfectionDegree');
     
-    // 热力完善度选择
-    ui.selPerfection.addEventListener('change', (e) => {
-        const val = e.target.value;
-        if (val === 'CUSTOM') {
-            ui.boxPerfCustom.classList.remove('hidden');
-        } else {
-            ui.boxPerfCustom.classList.add('hidden');
-            store.setState({ perfectionDegree: parseFloat(val) });
-        }
-    });
-    
-    // LHV 单位切换 (自动转换值)
-    ui.selUnitCal.addEventListener('change', (e) => {
-        const newUnit = e.target.value;
-        const currentState = store.getState();
-        const oldUnit = currentState.fuelCalUnit;
-        
-        const oldFactor = findUnitFactor(oldUnit, CAL_UNIT_OPTIONS);
-        const newFactor = findUnitFactor(newUnit, CAL_UNIT_OPTIONS);
-        const ratio = oldFactor / newFactor;
-        
-        const convertedValue = currentState.fuelCalValue * ratio;
-        
-        store.setState({ 
-            fuelCalValue: convertedValue, 
-            fuelCalUnit: newUnit 
+    if (ui.selPerfection) {
+        ui.selPerfection.addEventListener('change', (e) => {
+            const val = e.target.value;
+            if (val === 'CUSTOM') {
+                ui.boxPerfCustom.classList.remove('hidden');
+            } else {
+                ui.boxPerfCustom.classList.add('hidden');
+                store.setState({ perfectionDegree: parseFloat(val) });
+            }
         });
-    });
+    }
     
-    // CO2 单位切换 (只更新单位)
-    ui.selUnitCo2.addEventListener('change', (e) => {
-        store.setState({ fuelCo2Unit: e.target.value });
-    });
+    if (ui.selUnitCal) {
+        ui.selUnitCal.addEventListener('change', (e) => {
+            const newUnit = e.target.value;
+            const s = store.getState();
+            const oldUnit = s.fuelCalUnit;
+            const oldFactor = findUnitFactor(oldUnit, CAL_UNIT_OPTIONS);
+            const newFactor = findUnitFactor(newUnit, CAL_UNIT_OPTIONS);
+            const ratio = oldFactor / newFactor;
+            
+            store.setState({ 
+                fuelCalValue: s.fuelCalValue * ratio, 
+                fuelCalUnit: newUnit 
+            });
+        });
+    }
     
-    // COP 锁定
+    if (ui.selUnitCo2) {
+        ui.selUnitCo2.addEventListener('change', (e) => {
+            store.setState({ fuelCo2Unit: e.target.value });
+        });
+    }
+    
     const manualCopInputHandler = (e) => store.setState({ manualCop: parseFloat(e.target.value) });
     const manualCopChangeHandler = (e) => {
         const isManual = e.target.checked;
@@ -222,26 +241,31 @@ function bindEvents() {
     };
     if (ui.chkManualCop) ui.chkManualCop.addEventListener('change', manualCopChangeHandler);
     if (ui.inpManualCop) ui.inpManualCop.addEventListener('input', manualCopInputHandler);
-    
-    // 【单位切换逻辑修复】
-    ui.selLoadUnit.addEventListener('change', (e) => {
-        const unit = e.target.value;
-        store.setState({ loadUnit: unit }); // 仅更新单位，数值同步交给 store.subscribe
-    });
 
-    // 【蒸吨输入特殊处理】
-    ui.inpLoadTon.addEventListener('input', (e) => {
-        const tons = parseFloat(e.target.value) || 0;
-        const kw = convertSteamTonsToKW(tons);
-        // 关键：同时更新 loadValue（kW）和 loadValueTons（t/h）
-        store.setState({ loadValue: kw, loadValueTons: tons }); 
-    });
+    if(ui.selSteamStrat) ui.selSteamStrat.addEventListener('change', (e) => store.setState({ steamStrategy: e.target.value }));
+    if(ui.selRecType) ui.selRecType.addEventListener('change', (e) => store.setState({ recoveryType: e.target.value }));
 
-    ui.btnCalc.addEventListener('click', () => {
-        runSimulation();
-    });
+    if (ui.selLoadUnit) {
+        ui.selLoadUnit.addEventListener('change', (e) => {
+            store.setState({ loadUnit: e.target.value });
+        });
+    }
 
-    // 选型单按钮事件
+    if (ui.inpLoadTon) {
+        ui.inpLoadTon.addEventListener('input', (e) => {
+            const tons = parseFloat(e.target.value) || 0;
+            const kw = convertSteamTonsToKW(tons);
+            store.setState({ loadValue: kw, loadValueTons: tons }); 
+        });
+    }
+
+    if (ui.btnCalc) {
+        ui.btnCalc.addEventListener('click', () => {
+            runSimulation();
+        });
+    }
+
+    // 选型单
     if (ui.btnGenReq) {
         ui.btnGenReq.addEventListener('click', () => {
             if (!currentReqData) {
@@ -255,7 +279,6 @@ function bindEvents() {
             ui.reqLoadIn.innerText = currentReqData.loadIn.toFixed(1);
             ui.reqLoadOut.innerText = currentReqData.loadOut.toFixed(1);
             ui.reqCapacity.innerText = currentReqData.capacity.toLocaleString(undefined, { maximumFractionDigits: 0 });
-            
             ui.modalReq.classList.remove('hidden');
         });
     }
@@ -281,22 +304,27 @@ function bindEvents() {
 
 // === 3. 界面渲染 ===
 store.subscribe((state) => {
-    const { topology, mode, targetTemp, sourceTemp, recoveryType, loadUnit, loadValue, loadValueTons, fuelCalValue, fuelCalUnit, fuelCo2Value, fuelCo2Unit, perfectionDegree, isManualCop, manualCop } = state;
+    const { 
+        topology, mode, targetTemp, sourceTemp, sourceOut, loadInStd, recoveryType, loadUnit, loadValue, loadValueTons, 
+        fuelCalValue, fuelCalUnit, fuelCo2Value, fuelCo2Unit, perfectionDegree, isManualCop, manualCop 
+    } = state;
 
     if (ui.topo.value !== topology) ui.topo.value = topology;
     if (ui.selRecType && ui.selRecType.value !== recoveryType) ui.selRecType.value = recoveryType;
 
+    // 核心输入
     if (document.activeElement !== ui.inpTarget) ui.inpTarget.value = targetTemp;
+    if (document.activeElement !== ui.inpLoadInStd) ui.inpLoadInStd.value = loadInStd;
     if (document.activeElement !== ui.inpSource) ui.inpSource.value = sourceTemp;
+    if (document.activeElement !== ui.inpSourceOut) ui.inpSourceOut.value = sourceOut;
     if (document.activeElement !== ui.inpLoadIn) ui.inpLoadIn.value = state.loadIn;
     if (document.activeElement !== ui.inpLoadOut) ui.inpLoadOut.value = state.loadOut;
-    
-    // [v9.1] 渲染过量空气系数
+
     if (ui.inpExcessAir && document.activeElement !== ui.inpExcessAir) {
         ui.inpExcessAir.value = state.excessAir;
     }
     
-    // 【高级参数同步修复】
+    // 高级参数
     if (document.activeElement !== ui.inpFuelCal) ui.inpFuelCal.value = fuelCalValue.toFixed(2);
     populateUnitSelect(ui.selUnitCal, CAL_UNIT_OPTIONS, fuelCalUnit);
     
@@ -305,7 +333,6 @@ store.subscribe((state) => {
     
     if (document.activeElement !== ui.inpFuelEff) ui.inpFuelEff.value = state.boilerEff.toFixed(2);
     
-    // 完善度同步
     if (ui.selPerfection) {
         const perfStr = perfectionDegree.toFixed(2);
         const isCustom = ui.selPerfection.value === 'CUSTOM' || (!['0.40', '0.45', '0.55'].includes(perfStr));
@@ -320,71 +347,93 @@ store.subscribe((state) => {
         }
     }
     
-    // COP 锁定同步
     ui.chkManualCop.checked = isManualCop;
     ui.inpManualCop.disabled = !isManualCop;
     if (document.activeElement !== ui.inpManualCop) ui.inpManualCop.value = manualCop;
     
-
+    // 模式切换样式
     const isSteam = (mode === MODES.STEAM);
     ui.btnWater.className = !isSteam ? "flex-1 py-1.5 text-xs font-bold rounded-md shadow bg-white text-indigo-600 transition" : "flex-1 py-1.5 text-xs font-bold rounded-md text-slate-500 hover:text-slate-700 transition";
     ui.btnSteam.className = isSteam ? "flex-1 py-1.5 text-xs font-bold rounded-md shadow bg-white text-indigo-600 transition" : "flex-1 py-1.5 text-xs font-bold rounded-md text-slate-500 hover:text-slate-700 transition";
 
+    // --- 动态输入面板切换逻辑 (State-Driven Logic) ---
     if (topology === TOPOLOGY.RECOVERY) {
+        // 方案 C
         ui.panelStd.classList.add('hidden');
-        ui.boxTargetStd.classList.add('hidden');
         ui.panelRec.classList.remove('hidden');
-        if (isSteam) ui.boxSteamStrat.classList.remove('hidden');
-        else ui.boxSteamStrat.classList.add('hidden');
+        
+        if (isSteam) {
+             // 蒸汽模式：显示目标压力
+             ui.boxTargetStd.classList.remove('hidden'); 
+             ui.lblTarget.innerText = "系统饱和蒸汽压力 (Target)";
+             ui.unitTarget.innerText = "MPa(a)";
+             ui.resSatTemp.innerText = `${getSatTempFromPressure(targetTemp)} °C`;
+             ui.boxSteamInfo.classList.remove('hidden');
+             
+             ui.lblLoadIn.innerText = "锅炉补水温度 (In)";
+             ui.lblLoadOut.innerText = "热泵预热目标温度 (HP Out)"; 
+             ui.boxSteamStrat.classList.remove('hidden');
+        } else {
+             // 热水模式：隐藏目标压力，LoadOut 即为目标
+             ui.boxTargetStd.classList.add('hidden'); 
+             
+             ui.lblLoadIn.innerText = "系统回水温度 (In)";
+             ui.lblLoadOut.innerText = "系统总供水目标 (Target)"; // 语义修正
+             ui.boxSteamStrat.classList.add('hidden');
+        }
+
     } else {
+        // 方案 A/B
         ui.panelRec.classList.add('hidden');
         ui.panelStd.classList.remove('hidden');
         ui.boxTargetStd.classList.remove('hidden');
         ui.boxSteamStrat.classList.add('hidden');
         
-        const label = document.getElementById('label-source-temp');
-        if (label) label.innerText = (topology === TOPOLOGY.PARALLEL) ? "室外干球温度" : "余热源温度";
-    }
+        const labelSourceIn = document.getElementById('label-source-temp');
 
-    if (isSteam) {
-        ui.lblTarget.innerText = "目标饱和蒸汽压力";
-        ui.unitTarget.innerText = "MPa(a)";
-        ui.boxSteamInfo.classList.remove('hidden');
-        ui.resSatTemp.innerText = `${getSatTempFromPressure(targetTemp)} °C`;
-    } else {
-        ui.lblTarget.innerText = "目标供水/回水温度";
-        ui.unitTarget.innerText = "°C";
-        ui.boxSteamInfo.classList.add('hidden');
+        if (topology === TOPOLOGY.PARALLEL) {
+            if (labelSourceIn) labelSourceIn.innerText = "室外干球温度";
+            ui.unitSourceIn.innerText = "°C";
+            ui.boxSourceOut.classList.add('hidden');
+        } 
+        else if (topology === TOPOLOGY.COUPLED) {
+            if (labelSourceIn) labelSourceIn.innerText = "余热源入口温度 (In)";
+            ui.unitSourceIn.innerText = "°C";
+            ui.boxSourceOut.classList.remove('hidden');
+        }
+        
+        ui.boxLoadInStd.classList.remove('hidden'); 
+        if (isSteam) {
+            ui.lblTarget.innerText = "目标饱和蒸汽压力";
+            ui.unitTarget.innerText = "MPa(a)";
+            ui.boxSteamInfo.classList.remove('hidden');
+            ui.resSatTemp.innerText = `${getSatTempFromPressure(targetTemp)} °C`;
+            document.getElementById('label-load-in-std').innerText = "热汇入口温度 (补水)";
+        } else {
+            ui.lblTarget.innerText = "目标供水温度 (Out)";
+            ui.unitTarget.innerText = "°C";
+            ui.boxSteamInfo.classList.add('hidden');
+            document.getElementById('label-load-in-std').innerText = "热汇入口温度 (回水)";
+        }
     }
     
-    // 【负荷单位同步与输入框切换】
+    // 负荷单位同步
     const isTon = (loadUnit === 'TON');
-    ui.selLoadUnit.value = loadUnit; // 确保下拉框状态正确
+    ui.selLoadUnit.value = loadUnit;
     ui.unitLoadDisplay.innerText = loadUnit;
 
     if (isTon) {
         ui.inpLoad.classList.add('hidden');
         ui.inpLoadTon.classList.remove('hidden');
         ui.infoLoadConv.classList.remove('hidden');
-        
-        // 渲染蒸吨输入框的值
-        if (document.activeElement !== ui.inpLoadTon) {
-            ui.inpLoadTon.value = loadValueTons;
-        }
-        // 更新 kW 转换显示
+        if (document.activeElement !== ui.inpLoadTon) ui.inpLoadTon.value = loadValueTons;
         ui.valLoadConv.innerText = loadValue.toLocaleString(undefined, { maximumFractionDigits: 1 });
-        
-    } else { // KW 模式
+    } else {
         ui.inpLoad.classList.remove('hidden');
         ui.inpLoadTon.classList.add('hidden');
         ui.infoLoadConv.classList.add('hidden');
-        
-        // 渲染 kW 输入框的值
-        if (document.activeElement !== ui.inpLoad) {
-            ui.inpLoad.value = loadValue;
-        }
+        if (document.activeElement !== ui.inpLoad) ui.inpLoad.value = loadValue;
     }
-    
 });
 
 // === 4. 仿真运行 ===
@@ -423,17 +472,23 @@ function runSimulation() {
         ui.resCost.innerText = res.costPerHour.toFixed(1);
         const unitCost = res.costPerHour / state.loadValue;
         if (ui.resUnitCost) ui.resUnitCost.innerText = unitCost.toFixed(3);
+        
+        // [万元单位]
+        const annualSaveWan = res.annualSaving / 10000;
         if (ui.resAnnualSave) {
-            ui.resAnnualSave.innerText = res.annualSaving > 10000 
-                ? `${(res.annualSaving/10000).toFixed(1)}万` 
-                : res.annualSaving.toFixed(0);
+            ui.resAnnualSave.innerText = `${annualSaveWan.toFixed(1)} 万`;
         }
+        
+        // [决策建议]
+        if (res.recommendation) {
+            log(res.recommendation, annualSaveWan > 0 ? 'eco' : 'error');
+        }
+
         if (ui.resPayback) ui.resPayback.innerText = (res.payback > 20) ? ">20" : res.payback.toFixed(1);
         if (ui.resCo2Red) ui.resCo2Red.innerText = res.co2ReductionRate.toFixed(1);
     }
 
     if (res.recoveredHeat) {
-        // [修正] 总产能应使用 loadValue，因为这是系统的设计目标
         const totalCap = state.loadValue; 
         ui.valCapTotal.innerText = totalCap.toFixed(0);
         
@@ -457,9 +512,17 @@ function runSimulation() {
 
     updatePerformanceChart(state);
     
-    const displaySupplyT = (state.mode === MODES.STEAM) 
-        ? getSatTempFromPressure(state.targetTemp) 
-        : state.targetTemp;
+    // 可视化参数准备
+    let displaySupplyT;
+    if (state.topology === TOPOLOGY.RECOVERY && res.reqData) {
+        // 方案 C: 显示热泵实际出口温度
+        displaySupplyT = res.reqData.loadOut; 
+    } else {
+        // 方案 A/B: 显示目标温度
+        displaySupplyT = (state.mode === MODES.STEAM) 
+            ? getSatTempFromPressure(state.targetTemp) 
+            : state.targetTemp;
+    }
 
     renderSystemDiagram('diagram-container', {
         topology: state.topology,
@@ -480,9 +543,10 @@ function log(msg, type = 'info') {
     ui.log.scrollTop = ui.log.scrollHeight;
 }
 
+// 初始化
 bindEvents();
 
-// 初始化高级参数的默认值和单位
+// 首次加载初始化 (Advanced Params)
 const initialState = store.getState();
 const initialAdvancedState = {
     fuelCalValue: parseFloat(ui.inpFuelCal.value) || 10.0,
@@ -495,9 +559,10 @@ const initialAdvancedState = {
     isManualCop: ui.chkManualCop.checked || false
 };
 store.setState(initialAdvancedState);
-// 首次运行时，确保 loadValueTons 具有一个初始的反算值
+
+// 首次计算 loadValueTons
 if (initialState.loadUnit === 'KW' && initialState.loadValue && !initialState.loadValueTons) {
-    const tons = initialState.loadValue / 700; // 反算初始蒸吨
+    const tons = initialState.loadValue / 700; 
     store.setState({ loadValueTons: tons });
 }
 

@@ -7,14 +7,20 @@ export class Boiler {
     constructor(config) {
         // config: { fuelType, efficiency, loadKW, flueIn, flueOut, excessAir, fuelCalValue, fuelCo2Value... }
         this.config = config;
-        this.fuelData = FUEL_DB[config.fuelType] || FUEL_DB['NATURAL_GAS'];
         
-        // [v9.1 FIX] 允许高级参数覆盖默认燃料值
-        // 注意: 此处假设用户输入值已根据其选定单位转换为内部统一单位 (kJ/unit)
-        if (config.fuelCalValue !== undefined) {
+        // 1. 加载默认燃料数据
+        const defaultData = FUEL_DB[config.fuelType] || FUEL_DB['NATURAL_GAS'];
+        
+        // 2. 创建副本以避免污染原始常量
+        this.fuelData = { ...defaultData };
+        
+        // 3. [v9.1 FIX] 应用高级参数覆盖
+        // 注意: 我们假设前端输入的值已经匹配了内部计算需要的单位 (例如 LHV 对应 MJ/unit 或 kWh/unit)
+        if (config.fuelCalValue !== undefined && !isNaN(config.fuelCalValue)) {
             this.fuelData.calorificValue = config.fuelCalValue;
         }
-        if (config.fuelCo2Value !== undefined) {
+        
+        if (config.fuelCo2Value !== undefined && !isNaN(config.fuelCo2Value)) {
             this.fuelData.co2Factor = config.fuelCo2Value;
         }
     }
@@ -42,7 +48,7 @@ export class Boiler {
         const { loadKW, efficiency, flueIn, flueOut, excessAir } = this.config;
         const inputKW = loadKW / efficiency;
         
-        // 1. [v9.1] 计算实际烟气量 (考虑过量空气系数)
+        // 1. [v9.1] 计算实际烟气量 (考虑过量空气系数 Alpha)
         // 如果没有传入 excessAir，默认取 1.2
         const alpha = excessAir || 1.2;
         
@@ -52,7 +58,8 @@ export class Boiler {
             alpha
         );
 
-        const flueGasVol = inputKW * actualFlueFactor; // m3/h (实际工况)
+        // 实际工况下的烟气体积流量 (m3/h)
+        const flueGasVol = inputKW * actualFlueFactor; 
         const Cp_flue = 0.00038; // 简化比热容 (kWh/m3K)
 
         // 2. 显热计算 (Sensible)
@@ -70,13 +77,13 @@ export class Boiler {
         // 只有当 排烟温度 < 实际露点 时，才产生潜热
         if (flueOut < actualDewPoint) {
             let maxLatentRatio = 0.0;
+            // 简单的燃料潜热比例估算
             if (this.config.fuelType === 'NATURAL_GAS') maxLatentRatio = 0.11;
             else if (this.config.fuelType === 'BIOMASS') maxLatentRatio = 0.08;
 
             const maxLatentKW = inputKW * maxLatentRatio;
             
-            // 线性插值：(露点 -> 30度) 对应 (0% -> 100%)
-            // 注意：如果实际露点降到了 45度，而排烟是 48度，这里 latent 就是 0
+            // 线性插值模型：(露点 -> 30度) 对应 (0% -> 100% 潜热释放)
             let condFactor = (actualDewPoint - flueOut) / (actualDewPoint - 30);
             if (condFactor > 1) condFactor = 1;
             if (condFactor < 0) condFactor = 0;
