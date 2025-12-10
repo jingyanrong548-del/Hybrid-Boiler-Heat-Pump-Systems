@@ -23,13 +23,20 @@ const initialState = {
     flueOut: 40.0,
     loadIn: 20.0,            // 补水/回水温度
     loadOut: 90.0,           // 预热目标/供水温度
+
+    // 高级参数: LHV, CO2 因子 (手动覆盖)
+    fuelCalValue: 10.0,      // LHV value (index.html default)
+    fuelCalUnit: 'MJ/kg',    // Placeholder unit
+    fuelCo2Value: 0.202,     // CO2 factor value (index.html default)
+    fuelCo2Unit: 'kgCO2/unit', // Placeholder unit
     
     // 负荷与效率
     loadValue: 2000.0,       // kW
     loadUnit: 'KW',          // KW | TON
+    loadValueTons: 2000.0 / 700.0, // 初始蒸吨值
     perfectionDegree: 0.45,  // 热力完善度
-    manualCop: 0,            // 0 表示自动计算
-    isManualCop: false,
+    manualCop: 3.5,            // 手动COP值
+    isManualCop: false,      // 是否启用手动COP
     
     // 经济性
     fuelType: 'NATURAL_GAS',

@@ -17,7 +17,10 @@ export class System {
         }
 
         const boiler = new Boiler({
-            fuelType: s.fuelType, efficiency: s.boilerEff, loadKW: s.loadValue, flueIn: s.flueIn, flueOut: s.flueOut
+            fuelType: s.fuelType, efficiency: s.boilerEff, loadKW: s.loadValue, flueIn: s.flueIn, flueOut: s.flueOut,
+            excessAir: s.excessAir, // v9.1 Pass Alpha
+            fuelCalValue: s.fuelCalValue, // v9.1 Pass LHV Override
+            fuelCo2Value: s.fuelCo2Value // v9.1 Pass CO2 Override
         });
         const baseline = boiler.calculateBaseline(s.fuelPrice);
 
@@ -60,8 +63,12 @@ export class System {
         const annualSaving = hourlySaving * s.annualHours;
         const totalInvest = hpRes.recoveredHeat * s.capexHP;
         const payback = (annualSaving > 0) ? (totalInvest / annualSaving) : 99;
-        const currentCo2 = (baseline.co2PerHour - (savedFuelCost/s.fuelPrice/boiler.getCalorificValue() * boiler.fuelData.co2Factor)) + driveCo2;
-        const co2Reduction = ((baseline.co2PerHour - currentCo2) / baseline.co2PerHour) * 100;
+        // 使用实际燃料数据进行CO2计算
+        const baselineCo2PerHour = (s.loadValue / s.boilerEff / boiler.getCalorificValue()) * boiler.fuelData.co2Factor; 
+        const hpReplacedCo2 = (hpRes.recoveredHeat / s.boilerEff / boiler.getCalorificValue()) * boiler.fuelData.co2Factor;
+
+        const currentCo2 = (baselineCo2PerHour - hpReplacedCo2) + driveCo2;
+        const co2Reduction = ((baselineCo2PerHour - currentCo2) / baselineCo2PerHour) * 100;
         const per = (drivePrimary > 0) ? (hpRes.recoveredHeat / drivePrimary) : 0;
 
         // [FIX] 构造选型单数据 (Req Data)

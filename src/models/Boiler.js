@@ -5,9 +5,18 @@ import { calculateActualFlueVolume, calculateAdjustedDewPoint } from '../core/ph
 
 export class Boiler {
     constructor(config) {
-        // config: { fuelType, efficiency, loadKW, flueIn, flueOut, excessAir... }
+        // config: { fuelType, efficiency, loadKW, flueIn, flueOut, excessAir, fuelCalValue, fuelCo2Value... }
         this.config = config;
         this.fuelData = FUEL_DB[config.fuelType] || FUEL_DB['NATURAL_GAS'];
+        
+        // [v9.1 FIX] 允许高级参数覆盖默认燃料值
+        // 注意: 此处假设用户输入值已根据其选定单位转换为内部统一单位 (kJ/unit)
+        if (config.fuelCalValue !== undefined) {
+            this.fuelData.calorificValue = config.fuelCalValue;
+        }
+        if (config.fuelCo2Value !== undefined) {
+            this.fuelData.co2Factor = config.fuelCo2Value;
+        }
     }
 
     getCalorificValue() {

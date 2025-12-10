@@ -7,6 +7,41 @@ import { renderSystemDiagram } from './diagram.js';
 import { MODES, TOPOLOGY, STRATEGIES } from '../core/constants.js';
 import { getSatTempFromPressure, convertSteamTonsToKW } from '../core/physics.js';
 
+// === Unit Options for Advanced Parameters (FIXED: Unit Conversion) ===
+const CAL_UNIT_OPTIONS = [
+    // MJ/kg is arbitrary base (Factor=1.0)
+    { value: 'MJ/kg', text: 'MJ/kg', factor: 1.0 },
+    { value: 'kWh/kg', text: 'kWh/kg', factor: 0.277778 }, // 1 kWh ≈ 3.6 MJ
+    { value: 'MJ/m3', text: 'MJ/m³', factor: 1.0 },
+    { value: 'kWh/m3', text: 'kWh/m³', factor: 0.277778 }
+];
+
+const CO2_UNIT_OPTIONS = [
+    // kgCO2/unit is arbitrary base (Factor=1.0)
+    { value: 'kgCO2/unit', text: 'kg/Unit', factor: 1.0 }, // kg CO2 / kg Fuel or m3 Fuel
+    { value: 'kgCO2/kWh', text: 'kg/kWh', factor: 1.0 } // kg CO2 / kWh Heat Output
+];
+
+function populateUnitSelect(selectEl, options, currentUnit) {
+    if (!selectEl) return;
+    selectEl.innerHTML = '';
+    options.forEach(opt => {
+        const option = document.createElement('option');
+        option.value = opt.value;
+        option.innerText = opt.text;
+        if (opt.value === currentUnit) {
+             option.selected = true;
+        }
+        selectEl.appendChild(option);
+    });
+}
+
+function findUnitFactor(unit, options) {
+    const opt = options.find(o => o.value === unit);
+    return opt ? opt.factor : 1.0;
+}
+
+
 // === 1. DOM 元素映射 ===
 const ui = {
     topo: document.getElementById('select-topology'),
@@ -37,11 +72,24 @@ const ui = {
     resSatTemp: document.getElementById('res-sat-temp'),
     boxSteamInfo: document.getElementById('steam-info-box'),
 
+    resPayback: document.getElementById('res-payback'),
+    selPerfection: document.getElementById('sel-perfection'),
+    inpPerfectionCustom: document.getElementById('inp-perfection-custom'),
+    boxPerfCustom: document.getElementById('box-perf-custom'),
+    chkManualCop: document.getElementById('chk-manual-cop'),
+    inpManualCop: document.getElementById('inp-manual-cop'),
+    inpFuelCal: document.getElementById('inp-fuel-cal'),
+    selUnitCal: document.getElementById('sel-unit-cal'),
+    inpFuelCo2: document.getElementById('inp-fuel-co2'),
+    selUnitCo2: document.getElementById('sel-unit-co2'),
+    inpFuelEff: document.getElementById('inp-fuel-eff'),
+    
     inpLoad: document.getElementById('input-load'),
     inpLoadTon: document.getElementById('input-load-ton'),
     selLoadUnit: document.getElementById('select-load-unit'),
     valLoadConv: document.getElementById('val-load-converted'),
     infoLoadConv: document.getElementById('info-load-converted'),
+    unitLoadDisplay: document.getElementById('unit-load-display'), 
 
     btnCalc: document.getElementById('btn-calculate'),
 
@@ -53,7 +101,6 @@ const ui = {
     resCost: document.getElementById('res-cost'),         
     resUnitCost: document.getElementById('res-unit-cost'), 
     resAnnualSave: document.getElementById('res-annual-save'), 
-    resPayback: document.getElementById('res-payback'),   
     
     valCapTotal: document.getElementById('val-cap-total'),
     valCapTon: document.getElementById('val-cap-ton'),
@@ -114,8 +161,9 @@ function bindEvents() {
     bindInput(ui.inpLoadIn, 'loadIn');
     bindInput(ui.inpLoadOut, 'loadOut');
     bindInput(ui.inpTarget, 'targetTemp');
-    bindInput(ui.inpLoad, 'loadValue');
-    bindInput(ui.inpLoadTon, 'loadValueTons');
+    bindInput(ui.inpLoad, 'loadValue'); // 直接绑定 kW 值
+    // ui.inpLoadTon 不再直接绑定 loadValueTons，而是通过 input 事件处理
+
     bindInput(ui.inpPefElec, 'pefElec');
     
     // [v9.1 新增] 绑定过量空气系数
@@ -124,25 +172,69 @@ function bindEvents() {
     if(ui.selSteamStrat) ui.selSteamStrat.addEventListener('change', (e) => store.setState({ steamStrategy: e.target.value }));
     if(ui.selRecType) ui.selRecType.addEventListener('change', (e) => store.setState({ recoveryType: e.target.value }));
 
-    ui.selLoadUnit.addEventListener('change', (e) => {
-        const unit = e.target.value;
-        store.setState({ loadUnit: unit });
-        if(unit === 'TON') {
-            ui.inpLoad.classList.add('hidden');
-            ui.inpLoadTon.classList.remove('hidden');
-            ui.infoLoadConv.classList.remove('hidden');
+    // 【高级参数绑定修复】
+    bindInput(ui.inpFuelCal, 'fuelCalValue');
+    bindInput(ui.inpFuelCo2, 'fuelCo2Value');
+    bindInput(ui.inpFuelEff, 'boilerEff');
+    bindInput(ui.inpPefElec, 'pefElec');
+    bindInput(ui.inpPerfectionCustom, 'perfectionDegree');
+    
+    // 热力完善度选择
+    ui.selPerfection.addEventListener('change', (e) => {
+        const val = e.target.value;
+        if (val === 'CUSTOM') {
+            ui.boxPerfCustom.classList.remove('hidden');
         } else {
-            ui.inpLoad.classList.remove('hidden');
-            ui.inpLoadTon.classList.add('hidden');
-            ui.infoLoadConv.classList.add('hidden');
+            ui.boxPerfCustom.classList.add('hidden');
+            store.setState({ perfectionDegree: parseFloat(val) });
         }
     });
+    
+    // LHV 单位切换 (自动转换值)
+    ui.selUnitCal.addEventListener('change', (e) => {
+        const newUnit = e.target.value;
+        const currentState = store.getState();
+        const oldUnit = currentState.fuelCalUnit;
+        
+        const oldFactor = findUnitFactor(oldUnit, CAL_UNIT_OPTIONS);
+        const newFactor = findUnitFactor(newUnit, CAL_UNIT_OPTIONS);
+        const ratio = oldFactor / newFactor;
+        
+        const convertedValue = currentState.fuelCalValue * ratio;
+        
+        store.setState({ 
+            fuelCalValue: convertedValue, 
+            fuelCalUnit: newUnit 
+        });
+    });
+    
+    // CO2 单位切换 (只更新单位)
+    ui.selUnitCo2.addEventListener('change', (e) => {
+        store.setState({ fuelCo2Unit: e.target.value });
+    });
+    
+    // COP 锁定
+    const manualCopInputHandler = (e) => store.setState({ manualCop: parseFloat(e.target.value) });
+    const manualCopChangeHandler = (e) => {
+        const isManual = e.target.checked;
+        ui.inpManualCop.disabled = !isManual;
+        store.setState({ isManualCop: isManual });
+    };
+    if (ui.chkManualCop) ui.chkManualCop.addEventListener('change', manualCopChangeHandler);
+    if (ui.inpManualCop) ui.inpManualCop.addEventListener('input', manualCopInputHandler);
+    
+    // 【单位切换逻辑修复】
+    ui.selLoadUnit.addEventListener('change', (e) => {
+        const unit = e.target.value;
+        store.setState({ loadUnit: unit }); // 仅更新单位，数值同步交给 store.subscribe
+    });
 
+    // 【蒸吨输入特殊处理】
     ui.inpLoadTon.addEventListener('input', (e) => {
         const tons = parseFloat(e.target.value) || 0;
         const kw = convertSteamTonsToKW(tons);
-        store.setState({ loadValue: kw });
-        ui.valLoadConv.innerText = kw.toLocaleString();
+        // 关键：同时更新 loadValue（kW）和 loadValueTons（t/h）
+        store.setState({ loadValue: kw, loadValueTons: tons }); 
     });
 
     ui.btnCalc.addEventListener('click', () => {
@@ -162,7 +254,7 @@ function bindEvents() {
             ui.reqLoadType.innerText = currentReqData.loadType;
             ui.reqLoadIn.innerText = currentReqData.loadIn.toFixed(1);
             ui.reqLoadOut.innerText = currentReqData.loadOut.toFixed(1);
-            ui.reqCapacity.innerText = currentReqData.capacity.toLocaleString();
+            ui.reqCapacity.innerText = currentReqData.capacity.toLocaleString(undefined, { maximumFractionDigits: 0 });
             
             ui.modalReq.classList.remove('hidden');
         });
@@ -189,7 +281,7 @@ function bindEvents() {
 
 // === 3. 界面渲染 ===
 store.subscribe((state) => {
-    const { topology, mode, targetTemp, sourceTemp, recoveryType } = state;
+    const { topology, mode, targetTemp, sourceTemp, recoveryType, loadUnit, loadValue, loadValueTons, fuelCalValue, fuelCalUnit, fuelCo2Value, fuelCo2Unit, perfectionDegree, isManualCop, manualCop } = state;
 
     if (ui.topo.value !== topology) ui.topo.value = topology;
     if (ui.selRecType && ui.selRecType.value !== recoveryType) ui.selRecType.value = recoveryType;
@@ -203,6 +295,36 @@ store.subscribe((state) => {
     if (ui.inpExcessAir && document.activeElement !== ui.inpExcessAir) {
         ui.inpExcessAir.value = state.excessAir;
     }
+    
+    // 【高级参数同步修复】
+    if (document.activeElement !== ui.inpFuelCal) ui.inpFuelCal.value = fuelCalValue.toFixed(2);
+    populateUnitSelect(ui.selUnitCal, CAL_UNIT_OPTIONS, fuelCalUnit);
+    
+    if (document.activeElement !== ui.inpFuelCo2) ui.inpFuelCo2.value = fuelCo2Value.toFixed(3);
+    populateUnitSelect(ui.selUnitCo2, CO2_UNIT_OPTIONS, fuelCo2Unit);
+    
+    if (document.activeElement !== ui.inpFuelEff) ui.inpFuelEff.value = state.boilerEff.toFixed(2);
+    
+    // 完善度同步
+    if (ui.selPerfection) {
+        const perfStr = perfectionDegree.toFixed(2);
+        const isCustom = ui.selPerfection.value === 'CUSTOM' || (!['0.40', '0.45', '0.55'].includes(perfStr));
+        
+        if (isCustom) {
+            ui.selPerfection.value = 'CUSTOM';
+            ui.boxPerfCustom.classList.remove('hidden');
+            if (document.activeElement !== ui.inpPerfectionCustom) ui.inpPerfectionCustom.value = perfStr;
+        } else {
+            ui.selPerfection.value = perfStr;
+            ui.boxPerfCustom.classList.add('hidden');
+        }
+    }
+    
+    // COP 锁定同步
+    ui.chkManualCop.checked = isManualCop;
+    ui.inpManualCop.disabled = !isManualCop;
+    if (document.activeElement !== ui.inpManualCop) ui.inpManualCop.value = manualCop;
+    
 
     const isSteam = (mode === MODES.STEAM);
     ui.btnWater.className = !isSteam ? "flex-1 py-1.5 text-xs font-bold rounded-md shadow bg-white text-indigo-600 transition" : "flex-1 py-1.5 text-xs font-bold rounded-md text-slate-500 hover:text-slate-700 transition";
@@ -234,6 +356,35 @@ store.subscribe((state) => {
         ui.unitTarget.innerText = "°C";
         ui.boxSteamInfo.classList.add('hidden');
     }
+    
+    // 【负荷单位同步与输入框切换】
+    const isTon = (loadUnit === 'TON');
+    ui.selLoadUnit.value = loadUnit; // 确保下拉框状态正确
+    ui.unitLoadDisplay.innerText = loadUnit;
+
+    if (isTon) {
+        ui.inpLoad.classList.add('hidden');
+        ui.inpLoadTon.classList.remove('hidden');
+        ui.infoLoadConv.classList.remove('hidden');
+        
+        // 渲染蒸吨输入框的值
+        if (document.activeElement !== ui.inpLoadTon) {
+            ui.inpLoadTon.value = loadValueTons;
+        }
+        // 更新 kW 转换显示
+        ui.valLoadConv.innerText = loadValue.toLocaleString(undefined, { maximumFractionDigits: 1 });
+        
+    } else { // KW 模式
+        ui.inpLoad.classList.remove('hidden');
+        ui.inpLoadTon.classList.add('hidden');
+        ui.infoLoadConv.classList.add('hidden');
+        
+        // 渲染 kW 输入框的值
+        if (document.activeElement !== ui.inpLoad) {
+            ui.inpLoad.value = loadValue;
+        }
+    }
+    
 });
 
 // === 4. 仿真运行 ===
@@ -282,7 +433,8 @@ function runSimulation() {
     }
 
     if (res.recoveredHeat) {
-        const totalCap = res.tonData ? (res.tonData.total * 700) : res.recoveredHeat;
+        // [修正] 总产能应使用 loadValue，因为这是系统的设计目标
+        const totalCap = state.loadValue; 
         ui.valCapTotal.innerText = totalCap.toFixed(0);
         
         if (res.tonData) {
@@ -329,5 +481,25 @@ function log(msg, type = 'info') {
 }
 
 bindEvents();
+
+// 初始化高级参数的默认值和单位
+const initialState = store.getState();
+const initialAdvancedState = {
+    fuelCalValue: parseFloat(ui.inpFuelCal.value) || 10.0,
+    fuelCalUnit: CAL_UNIT_OPTIONS[0].value, 
+    fuelCo2Value: parseFloat(ui.inpFuelCo2.value) || 0.202,
+    fuelCo2Unit: CO2_UNIT_OPTIONS[0].value, 
+    perfectionDegree: parseFloat(ui.selPerfection.value) || 0.45,
+    boilerEff: parseFloat(ui.inpFuelEff.value) || 0.92,
+    manualCop: parseFloat(ui.inpManualCop.value) || 3.5,
+    isManualCop: ui.chkManualCop.checked || false
+};
+store.setState(initialAdvancedState);
+// 首次运行时，确保 loadValueTons 具有一个初始的反算值
+if (initialState.loadUnit === 'KW' && initialState.loadValue && !initialState.loadValueTons) {
+    const tons = initialState.loadValue / 700; // 反算初始蒸吨
+    store.setState({ loadValueTons: tons });
+}
+
 if (ui.selRecType) store.setState({ recoveryType: ui.selRecType.value });
 store.notify(store.getState());
