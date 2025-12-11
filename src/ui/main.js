@@ -575,8 +575,26 @@ store.subscribe((state) => {
 // === 5. 仿真运行逻辑 ===
 
 // 5.1 Python 呼叫专用函数
+// src/ui/main.js
+
 async function runPythonSchemeC(state) {
-    // 1. 准备数据: 计算烟气量
+    // 🟢 [终极修复] 智能热值归一化
+    // 无论用户选什么单位，我们根据数值大小猜它是 kWh 还是 MJ
+    let normalizedCalValue = state.fuelCalValue;
+    
+    // 判定条件：
+    // 1. 明确选了 kWh 单位
+    const isUnitKWh = state.fuelCalUnit && state.fuelCalUnit.includes('kWh');
+    // 2. 或者：选了天然气，且数值小于 20 (说明填的是 ~10 kWh，而不是 ~36 MJ)
+    const isLowValue = (state.fuelType === 'NATURAL_GAS' && state.fuelCalValue < 20);
+
+    if (isUnitKWh || isLowValue) {
+        normalizedCalValue = state.fuelCalValue * 3.6;
+        // 打印一条日志告诉用户发生了修正
+        log(`⚠️ 检测到热值 (${state.fuelCalValue}) 为 kWh 量级，已自动修正为 ${normalizedCalValue.toFixed(1)} MJ`, 'warning');
+    }
+
+    // 2. 准备数据: 计算烟气量
     const boiler = new Boiler({
         fuelType: state.fuelType,
         efficiency: state.boilerEff,
@@ -584,17 +602,17 @@ async function runPythonSchemeC(state) {
         flueIn: state.flueIn,
         flueOut: state.flueOut,
         excessAir: state.excessAir,
-        fuelCalValue: state.fuelCalValue,
+        fuelCalValue: normalizedCalValue, // <--- 传入修正后的值
         fuelCo2Value: state.fuelCo2Value
     });
     const sourcePot = boiler.calculateSourcePotential();
     
-    // 2. 准备数据: 计算水流量
+    // 3. 准备数据: 计算水流量
     const deltaT_Water = state.loadOut - state.loadIn; 
     if (deltaT_Water <= 0) throw new Error("水温差必须大于 0");
     const flow_kg_h = (state.loadValue * 3600) / (4.187 * deltaT_Water);
 
-    // 3. 组装 Payload
+    // 4. 组装 Payload
     const payload = {
         sink_in_temp: state.loadIn,
         sink_out_target: state.loadOut, 
@@ -608,24 +626,30 @@ async function runPythonSchemeC(state) {
     
     log(`📡 呼叫 Python: 流量=${flow_kg_h.toFixed(0)}kg/h, 烟气=${sourcePot.flowVol.toFixed(0)}m3/h`);
 
-    // 4. 调用 API
+    // 5. 调用 API
     const pyRes = await fetchSchemeC(payload);
 
-    // 5. 检查收敛状态
+    // 6. 检查收敛状态
     if (pyRes.status !== 'converged') {
         throw new Error(pyRes.reason || "计算未收敛 (热源不足以支撑该负荷)");
     }
 
-    // 6. 结果适配 (Python物理结果 -> UI经济结果)
+    // 7. 结果适配
     const recoveredHeat = pyRes.target_load_kw;
     const driveEnergy = recoveredHeat / pyRes.final_cop;
     
     const baseline = boiler.calculateBaseline(state.fuelPrice);
+    // 经济计算用修正后的 MJ 值计算能量，再除以“归一化前”的单位值来算钱？
+    // 不，算钱要和用户的输入保持一致。如果用户输入 10 kWh/m3, 单价 3.8 元/m3。
+    // 我们算出节省了 X MJ 能量。
+    // X MJ / 3.6 = Y kWh.
+    // Y kWh / 10 (用户输入的10) = Z m3.
+    // Z m3 * 3.8 = 钱。
+    // 简化公式：Saved_Units = Saved_MJ / normalizedCalValue (因为 normalized 已经是 MJ/unit 了)
     const savedFuelMJ = (recoveredHeat / state.boilerEff) * 3.6;
-    const savedFuelUnit = savedFuelMJ / state.fuelCalValue;
+    const savedFuelUnit = savedFuelMJ / normalizedCalValue; 
     const savedCost = savedFuelUnit * state.fuelPrice;
     
-    // 假设电驱动 MVR
     const driveCost = driveEnergy * state.elecPrice; 
     
     const hourlySaving = savedCost - driveCost;
@@ -641,10 +665,10 @@ async function runPythonSchemeC(state) {
         payback: payback,
         
         reqData: {
-            sourceType: `烟气 (Flue Gas) @ ${state.flueIn}°C`, // 补全 Type 字段
-            loadType: state.mode === MODES.STEAM ? "补水预热 (Pre-heat)" : "热水 (Hot Water)", // 补全 Type 字段
+            sourceType: `烟气 (Flue Gas) @ ${state.flueIn}°C`,
+            loadType: state.mode === MODES.STEAM ? "补水预热 (Pre-heat)" : "热水 (Hot Water)",
             sourceIn: state.flueIn,
-            sourceOut: pyRes.required_source_out, // 🟢 Python 算出的排烟
+            sourceOut: pyRes.required_source_out,
             loadIn: state.loadIn, 
             loadOut: state.loadOut,
             capacity: recoveredHeat
