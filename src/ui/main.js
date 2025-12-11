@@ -4,13 +4,13 @@ import { store } from '../state/store.js';
 import { System } from '../models/System.js';
 import { updatePerformanceChart } from './charts.js';
 import { renderSystemDiagram } from './diagram.js'; 
-import { MODES, TOPOLOGY, STRATEGIES } from '../core/constants.js';
+import { MODES, TOPOLOGY, STRATEGIES, FUEL_DB } from '../core/constants.js';
 import { getSatTempFromPressure, convertSteamTonsToKW } from '../core/physics.js';
 
-// === Unit Options for Advanced Parameters ===
+// === Unit Options ===
 const CAL_UNIT_OPTIONS = [
-    { value: 'MJ/kg', text: 'MJ/kg', factor: 1.0 },
-    { value: 'kWh/kg', text: 'kWh/kg', factor: 0.277778 }, 
+    { value: 'MJ/kg', text: 'MJ/unit', factor: 1.0 },
+    { value: 'kWh/kg', text: 'kWh/unit', factor: 0.277778 }, 
     { value: 'MJ/m3', text: 'MJ/m³', factor: 1.0 },
     { value: 'kWh/m3', text: 'kWh/m³', factor: 0.277778 }
 ];
@@ -46,28 +46,32 @@ const ui = {
     btnSteam: document.getElementById('btn-mode-steam'),
     inpMode: document.getElementById('input-target-mode'),
     
+    selFuel: document.getElementById('select-fuel'),
+    inpElecPrice: document.getElementById('input-elec-price'),
+    inpFuelPrice: document.getElementById('input-fuel-price'),
+    lblFuelUnit: document.getElementById('label-fuel-unit'),
+    
+    inpCapexHP: document.getElementById('inp-capex-hp'),
+    inpCapexBase: document.getElementById('inp-capex-base'),
+
     panelStd: document.getElementById('panel-input-standard'),
     panelRec: document.getElementById('panel-input-recovery'),
     boxTargetStd: document.getElementById('box-target-std'),
     boxSteamStrat: document.getElementById('box-steam-strategy'),
     
-    // 方案 A/B 热源输入
     inpSource: document.getElementById('input-temp-source'),
     inpSourceOut: document.getElementById('input-temp-source-out'), 
     boxSourceOut: document.getElementById('box-source-out'), 
     unitSourceIn: document.getElementById('unit-source-in'), 
     
-    // 方案 C 烟气输入
     inpFlueIn: document.getElementById('input-flue-temp-in'),
     inpFlueOut: document.getElementById('input-flue-temp-out'),
     
-    // 方案 C 热汇输入
     inpLoadIn: document.getElementById('input-load-in'),
     inpLoadOut: document.getElementById('input-load-out'),
     lblLoadIn: document.getElementById('label-load-in'),
     lblLoadOut: document.getElementById('label-load-out'),
     
-    // 方案 A/B 热汇输入
     inpLoadInStd: document.getElementById('input-load-in-std'), 
     boxLoadInStd: document.getElementById('box-load-in-std'), 
 
@@ -104,12 +108,16 @@ const ui = {
 
     btnCalc: document.getElementById('btn-calculate'),
 
+    resCost: document.getElementById('res-cost'),         
+    
+    lblCop: document.getElementById('lbl-res-1'),
     resCop: document.getElementById('res-cop'),
     resLift: document.getElementById('res-lift'),
-    resPer: document.getElementById('res-per'),
-    resCo2Red: document.getElementById('res-co2-red'),
     
-    resCost: document.getElementById('res-cost'),         
+    // PER 卡片元素
+    resPer: document.getElementById('res-per'),
+    
+    resCo2Red: document.getElementById('res-co2-red'),
     resUnitCost: document.getElementById('res-unit-cost'), 
     resAnnualSave: document.getElementById('res-annual-save'), 
     
@@ -117,7 +125,6 @@ const ui = {
     valCapTon: document.getElementById('val-cap-ton'),
     valCapBreakdown: document.getElementById('val-cap-breakdown'),
     
-    // 选型单 DOM
     btnGenReq: document.getElementById('btn-gen-req'),
     modalReq: document.getElementById('modal-requisition'),
     btnCloseModal: document.getElementById('btn-close-modal'),
@@ -135,39 +142,173 @@ const ui = {
 
 let currentReqData = null;
 
-// === 2. 事件绑定 ===
+function resetFuelParams(fuelType) {
+    const db = FUEL_DB[fuelType] || FUEL_DB['NATURAL_GAS'];
+    let bestCalUnit = 'MJ/kg'; 
+    if (db.unit === 'm³') bestCalUnit = 'MJ/m3';
+    
+    const updates = {
+        fuelType: fuelType,
+        fuelCalValue: db.calorificValue, 
+        fuelCalUnit: bestCalUnit,
+        fuelCo2Value: db.co2Factor,     
+        fuelCo2Unit: 'kgCO2/unit',
+        boilerEff: db.defaultEfficiency || (fuelType === 'ELECTRICITY' ? 0.99 : 0.92)
+    };
+
+    if (fuelType === 'ELECTRICITY') {
+        const currentElecPrice = parseFloat(ui.inpElecPrice.value) || 0.75;
+        updates.fuelPrice = currentElecPrice;
+    }
+
+    store.setState(updates);
+    populateUnitSelect(ui.selUnitCal, CAL_UNIT_OPTIONS, bestCalUnit);
+    populateUnitSelect(ui.selUnitCo2, CO2_UNIT_OPTIONS, 'kgCO2/unit');
+    log(`🔄 燃料切换: ${db.name} (参数已重置)`, 'info');
+}
+
+function updatePriceInterlock(fuelType) {
+    if (!ui.inpFuelPrice) return;
+    if (fuelType === 'ELECTRICITY') {
+        ui.inpFuelPrice.disabled = true;
+        ui.inpFuelPrice.classList.add('bg-slate-100', 'text-slate-400', 'cursor-not-allowed');
+    } else {
+        ui.inpFuelPrice.disabled = false;
+        ui.inpFuelPrice.classList.remove('bg-slate-100', 'text-slate-400', 'cursor-not-allowed');
+    }
+}
+
+function renderDecisionBanner(decision) {
+    const panel = ui.resCost.closest('.bg-white.rounded-xl.shadow-md');
+    if (!panel) return;
+
+    const existingBanner = panel.querySelector('#decision-banner');
+    if (existingBanner) existingBanner.remove();
+
+    if (!decision) return;
+
+    const banner = document.createElement('div');
+    banner.id = 'decision-banner';
+    banner.className = `px-4 py-3 border-b ${decision.class || 'bg-slate-50 border-slate-200'} flex flex-col md:flex-row justify-between items-center gap-2 transition-all duration-500`;
+    
+    banner.innerHTML = `
+        <div class="flex items-center gap-2">
+            <span class="text-lg">${decision.level === 'STRONG' ? '🏆' : (decision.level === 'MARGINAL' ? '⚖️' : '🛑')}</span>
+            <span class="text-xs md:text-sm font-bold">${decision.title}</span>
+        </div>
+        <div class="text-[10px] md:text-xs font-medium opacity-90">${decision.desc}</div>
+    `;
+
+    const header = panel.firstElementChild;
+    if (header) {
+        header.insertAdjacentElement('afterend', banner);
+    }
+}
+
+// [FIXED] 获取或建立稳定的效率卡片容器
+function getEfficiencyCardContainer() {
+    // 尝试通过 ID 获取
+    let container = document.getElementById('efficiency-card-panel');
+    
+    // 如果没有 ID，说明是初次加载，尝试通过 ui.resPer 查找
+    if (!container && ui.resPer) {
+        // 找到包含 res-per 的最近的卡片容器 (bg-white ...)
+        container = ui.resPer.closest('.bg-white.p-4');
+        if (container) {
+            // 赋予永久 ID
+            container.id = 'efficiency-card-panel';
+        }
+    }
+    return container;
+}
+
+// [FIXED] 渲染耦合效能仪表盘
+function renderCouplingDashboard(couplingData) {
+    const parent = getEfficiencyCardContainer();
+    if (!parent) return; // 找不到容器，放弃渲染
+
+    const headerHtml = `<div class="text-[10px] uppercase font-bold text-slate-400 tracking-wider">综合效能对比 (EFFICIENCY)</div>`;
+    const { site, per } = couplingData;
+    
+    const bodyHtml = `
+        <div class="mt-2 space-y-2">
+            <div class="flex justify-between items-end border-b border-violet-100 pb-1">
+                <div class="text-[10px] text-slate-500">Site Eff. (终端)</div>
+                <div class="text-right">
+                    <div class="text-xs font-bold text-slate-700">${site.before.toFixed(1)}% <span class="text-slate-400">-></span> <span class="text-violet-700">${site.after.toFixed(1)}%</span></div>
+                    <div class="text-[9px] text-emerald-500 font-bold">⬆ +${site.delta.toFixed(1)} pts</div>
+                </div>
+            </div>
+            <div class="flex justify-between items-end">
+                <div class="text-[10px] text-slate-500">PER (一次能源)</div>
+                <div class="text-right">
+                    <div class="text-xs font-bold text-slate-700">${per.before.toFixed(2)} <span class="text-slate-400">-></span> <span class="text-violet-700">${per.after.toFixed(2)}</span></div>
+                    <div class="text-[9px] text-emerald-500 font-bold">⬆ +${per.delta.toFixed(2)}</div>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    parent.innerHTML = headerHtml + bodyHtml;
+}
+
+// [FIXED] 恢复标准 PER 显示
+function renderStandardPER(val) {
+    const parent = getEfficiencyCardContainer();
+    if (!parent) return;
+
+    parent.innerHTML = `
+        <div class="text-[10px] uppercase font-bold text-slate-400 tracking-wider" id="lbl-res-3">一次能源利用率 (PER)</div>
+        <div class="text-2xl font-bold text-violet-700 mt-1" id="res-per">${val}</div>
+        <div class="text-[10px] text-violet-500 font-medium" id="desc-res-3">Efficiency</div>
+    `;
+    
+    // 重要：重新绑定 ui.resPer，防止下次找不到子元素时引用错误
+    ui.resPer = document.getElementById('res-per');
+}
+
+// === 3. 事件绑定 ===
 function bindEvents() {
     ui.topo.addEventListener('change', (e) => {
         const newTopo = e.target.value;
         const updates = { topology: newTopo };
-        // 切换拓扑时，给予合理的默认值，但不强制覆盖用户可能已输入的高级参数
         if (newTopo === TOPOLOGY.PARALLEL) updates.sourceTemp = -5.0; 
         else if (newTopo === TOPOLOGY.COUPLED) updates.sourceTemp = 35.0; 
         store.setState(updates);
     });
 
-    // [修正] 模式切换逻辑：只改变模式和核心默认温度，避免全量重置
     ui.btnWater.addEventListener('click', () => {
-        store.setState({ 
-            mode: MODES.WATER, 
-            targetTemp: 60.0, // 默认热水目标
-            // 只有当这些值明显不合理（例如是蒸汽的高温）时才重置
-            // 这里为了用户体验，我们提供一套标准热水工况默认值
-            loadIn: 50.0, 
-            loadOut: 70.0, 
-            loadInStd: 50.0 
-        });
+        store.setState({ mode: MODES.WATER, targetTemp: 60.0, loadIn: 50.0, loadOut: 70.0, loadInStd: 50.0 });
     });
 
     ui.btnSteam.addEventListener('click', () => {
-        store.setState({ 
-            mode: MODES.STEAM, 
-            targetTemp: 0.5, // 0.5 MPa
-            loadIn: 20.0,    // 补水通常较冷
-            loadOut: 90.0,   // 预热目标
-            loadInStd: 20.0
-        });
+        store.setState({ mode: MODES.STEAM, targetTemp: 0.5, loadIn: 20.0, loadOut: 90.0, loadInStd: 20.0 });
     });
+
+    if (ui.selFuel) {
+        ui.selFuel.addEventListener('change', (e) => {
+            const newFuel = e.target.value;
+            resetFuelParams(newFuel);
+            updatePriceInterlock(newFuel);
+        });
+    }
+
+    if (ui.inpElecPrice) {
+        ui.inpElecPrice.addEventListener('input', (e) => {
+            const val = parseFloat(e.target.value);
+            const s = store.getState();
+            const updates = { elecPrice: val };
+            if (s.fuelType === 'ELECTRICITY') updates.fuelPrice = val;
+            store.setState(updates);
+        });
+    }
+
+    if (ui.inpFuelPrice) {
+        ui.inpFuelPrice.addEventListener('input', (e) => {
+            const s = store.getState();
+            if (s.fuelType !== 'ELECTRICITY') store.setState({ fuelPrice: parseFloat(e.target.value) });
+        });
+    }
 
     const bindInput = (el, key, isFloat = true) => {
         if(!el) return;
@@ -177,27 +318,25 @@ function bindEvents() {
         });
     };
 
-    // 核心输入绑定
     bindInput(ui.inpSource, 'sourceTemp');
     bindInput(ui.inpSourceOut, 'sourceOut'); 
     bindInput(ui.inpLoadInStd, 'loadInStd'); 
-
     bindInput(ui.inpFlueIn, 'flueIn');
     bindInput(ui.inpFlueOut, 'flueOut');
     bindInput(ui.inpLoadIn, 'loadIn');
     bindInput(ui.inpLoadOut, 'loadOut');
-
     bindInput(ui.inpTarget, 'targetTemp');
     bindInput(ui.inpLoad, 'loadValue'); 
     bindInput(ui.inpAnnualHours, 'annualHours');
     bindInput(ui.inpExcessAir, 'excessAir');
     
-    // 高级参数绑定
     bindInput(ui.inpFuelCal, 'fuelCalValue');
     bindInput(ui.inpFuelCo2, 'fuelCo2Value');
     bindInput(ui.inpFuelEff, 'boilerEff');
     bindInput(ui.inpPefElec, 'pefElec');
     bindInput(ui.inpPerfectionCustom, 'perfectionDegree');
+    bindInput(ui.inpCapexHP, 'capexHP');
+    bindInput(ui.inpCapexBase, 'capexBase');
     
     if (ui.selPerfection) {
         ui.selPerfection.addEventListener('change', (e) => {
@@ -219,19 +358,11 @@ function bindEvents() {
             const oldFactor = findUnitFactor(oldUnit, CAL_UNIT_OPTIONS);
             const newFactor = findUnitFactor(newUnit, CAL_UNIT_OPTIONS);
             const ratio = oldFactor / newFactor;
-            
-            store.setState({ 
-                fuelCalValue: s.fuelCalValue * ratio, 
-                fuelCalUnit: newUnit 
-            });
+            store.setState({ fuelCalValue: s.fuelCalValue * ratio, fuelCalUnit: newUnit });
         });
     }
     
-    if (ui.selUnitCo2) {
-        ui.selUnitCo2.addEventListener('change', (e) => {
-            store.setState({ fuelCo2Unit: e.target.value });
-        });
-    }
+    if (ui.selUnitCo2) ui.selUnitCo2.addEventListener('change', (e) => store.setState({ fuelCo2Unit: e.target.value }));
     
     const manualCopInputHandler = (e) => store.setState({ manualCop: parseFloat(e.target.value) });
     const manualCopChangeHandler = (e) => {
@@ -245,11 +376,7 @@ function bindEvents() {
     if(ui.selSteamStrat) ui.selSteamStrat.addEventListener('change', (e) => store.setState({ steamStrategy: e.target.value }));
     if(ui.selRecType) ui.selRecType.addEventListener('change', (e) => store.setState({ recoveryType: e.target.value }));
 
-    if (ui.selLoadUnit) {
-        ui.selLoadUnit.addEventListener('change', (e) => {
-            store.setState({ loadUnit: e.target.value });
-        });
-    }
+    if (ui.selLoadUnit) ui.selLoadUnit.addEventListener('change', (e) => store.setState({ loadUnit: e.target.value }));
 
     if (ui.inpLoadTon) {
         ui.inpLoadTon.addEventListener('input', (e) => {
@@ -259,13 +386,8 @@ function bindEvents() {
         });
     }
 
-    if (ui.btnCalc) {
-        ui.btnCalc.addEventListener('click', () => {
-            runSimulation();
-        });
-    }
+    if (ui.btnCalc) ui.btnCalc.addEventListener('click', () => runSimulation());
 
-    // 选型单
     if (ui.btnGenReq) {
         ui.btnGenReq.addEventListener('click', () => {
             if (!currentReqData) {
@@ -283,11 +405,7 @@ function bindEvents() {
         });
     }
 
-    if (ui.btnCloseModal) {
-        ui.btnCloseModal.addEventListener('click', () => {
-            ui.modalReq.classList.add('hidden');
-        });
-    }
+    if (ui.btnCloseModal) ui.btnCloseModal.addEventListener('click', () => ui.modalReq.classList.add('hidden'));
 
     if (ui.btnCopyReq) {
         ui.btnCopyReq.addEventListener('click', () => {
@@ -302,17 +420,29 @@ function bindEvents() {
     }
 }
 
-// === 3. 界面渲染 ===
+// === 4. 界面渲染 ===
 store.subscribe((state) => {
     const { 
         topology, mode, targetTemp, sourceTemp, sourceOut, loadInStd, recoveryType, loadUnit, loadValue, loadValueTons, 
-        fuelCalValue, fuelCalUnit, fuelCo2Value, fuelCo2Unit, perfectionDegree, isManualCop, manualCop 
+        fuelCalValue, fuelCalUnit, fuelCo2Value, fuelCo2Unit, perfectionDegree, isManualCop, manualCop,
+        fuelType, elecPrice, fuelPrice
     } = state;
 
     if (ui.topo.value !== topology) ui.topo.value = topology;
     if (ui.selRecType && ui.selRecType.value !== recoveryType) ui.selRecType.value = recoveryType;
+    if (ui.selFuel && ui.selFuel.value !== fuelType) ui.selFuel.value = fuelType;
+    if (document.activeElement !== ui.inpElecPrice) ui.inpElecPrice.value = elecPrice;
+    
+    updatePriceInterlock(fuelType);
+    if (document.activeElement !== ui.inpFuelPrice) {
+        ui.inpFuelPrice.value = fuelPrice;
+    }
+    
+    if (ui.lblFuelUnit) {
+        const db = FUEL_DB[fuelType];
+        ui.lblFuelUnit.innerText = `/${db ? db.unit : 'unit'}`;
+    }
 
-    // 核心输入
     if (document.activeElement !== ui.inpTarget) ui.inpTarget.value = targetTemp;
     if (document.activeElement !== ui.inpLoadInStd) ui.inpLoadInStd.value = loadInStd;
     if (document.activeElement !== ui.inpSource) ui.inpSource.value = sourceTemp;
@@ -324,19 +454,17 @@ store.subscribe((state) => {
         ui.inpExcessAir.value = state.excessAir;
     }
     
-    // 高级参数
     if (document.activeElement !== ui.inpFuelCal) ui.inpFuelCal.value = fuelCalValue.toFixed(2);
-    populateUnitSelect(ui.selUnitCal, CAL_UNIT_OPTIONS, fuelCalUnit);
+    if (ui.selUnitCal && ui.selUnitCal.value !== fuelCalUnit) ui.selUnitCal.value = fuelCalUnit;
     
     if (document.activeElement !== ui.inpFuelCo2) ui.inpFuelCo2.value = fuelCo2Value.toFixed(3);
-    populateUnitSelect(ui.selUnitCo2, CO2_UNIT_OPTIONS, fuelCo2Unit);
+    if (ui.selUnitCo2 && ui.selUnitCo2.value !== fuelCo2Unit) ui.selUnitCo2.value = fuelCo2Unit;
     
     if (document.activeElement !== ui.inpFuelEff) ui.inpFuelEff.value = state.boilerEff.toFixed(2);
     
     if (ui.selPerfection) {
         const perfStr = perfectionDegree.toFixed(2);
         const isCustom = ui.selPerfection.value === 'CUSTOM' || (!['0.40', '0.45', '0.55'].includes(perfStr));
-        
         if (isCustom) {
             ui.selPerfection.value = 'CUSTOM';
             ui.boxPerfCustom.classList.remove('hidden');
@@ -351,46 +479,34 @@ store.subscribe((state) => {
     ui.inpManualCop.disabled = !isManualCop;
     if (document.activeElement !== ui.inpManualCop) ui.inpManualCop.value = manualCop;
     
-    // 模式切换样式
     const isSteam = (mode === MODES.STEAM);
     ui.btnWater.className = !isSteam ? "flex-1 py-1.5 text-xs font-bold rounded-md shadow bg-white text-indigo-600 transition" : "flex-1 py-1.5 text-xs font-bold rounded-md text-slate-500 hover:text-slate-700 transition";
     ui.btnSteam.className = isSteam ? "flex-1 py-1.5 text-xs font-bold rounded-md shadow bg-white text-indigo-600 transition" : "flex-1 py-1.5 text-xs font-bold rounded-md text-slate-500 hover:text-slate-700 transition";
 
-    // --- 动态输入面板切换逻辑 (State-Driven Logic) ---
     if (topology === TOPOLOGY.RECOVERY) {
-        // 方案 C
         ui.panelStd.classList.add('hidden');
         ui.panelRec.classList.remove('hidden');
-        
         if (isSteam) {
-             // 蒸汽模式：显示目标压力
              ui.boxTargetStd.classList.remove('hidden'); 
              ui.lblTarget.innerText = "系统饱和蒸汽压力 (Target)";
              ui.unitTarget.innerText = "MPa(a)";
              ui.resSatTemp.innerText = `${getSatTempFromPressure(targetTemp)} °C`;
              ui.boxSteamInfo.classList.remove('hidden');
-             
              ui.lblLoadIn.innerText = "锅炉补水温度 (In)";
              ui.lblLoadOut.innerText = "热泵预热目标温度 (HP Out)"; 
              ui.boxSteamStrat.classList.remove('hidden');
         } else {
-             // 热水模式：隐藏目标压力，LoadOut 即为目标
              ui.boxTargetStd.classList.add('hidden'); 
-             
              ui.lblLoadIn.innerText = "系统回水温度 (In)";
-             ui.lblLoadOut.innerText = "系统总供水目标 (Target)"; // 语义修正
+             ui.lblLoadOut.innerText = "系统总供水目标 (Target)"; 
              ui.boxSteamStrat.classList.add('hidden');
         }
-
     } else {
-        // 方案 A/B
         ui.panelRec.classList.add('hidden');
         ui.panelStd.classList.remove('hidden');
         ui.boxTargetStd.classList.remove('hidden');
         ui.boxSteamStrat.classList.add('hidden');
-        
         const labelSourceIn = document.getElementById('label-source-temp');
-
         if (topology === TOPOLOGY.PARALLEL) {
             if (labelSourceIn) labelSourceIn.innerText = "室外干球温度";
             ui.unitSourceIn.innerText = "°C";
@@ -401,7 +517,6 @@ store.subscribe((state) => {
             ui.unitSourceIn.innerText = "°C";
             ui.boxSourceOut.classList.remove('hidden');
         }
-        
         ui.boxLoadInStd.classList.remove('hidden'); 
         if (isSteam) {
             ui.lblTarget.innerText = "目标饱和蒸汽压力";
@@ -417,11 +532,9 @@ store.subscribe((state) => {
         }
     }
     
-    // 负荷单位同步
     const isTon = (loadUnit === 'TON');
     ui.selLoadUnit.value = loadUnit;
     ui.unitLoadDisplay.innerText = loadUnit;
-
     if (isTon) {
         ui.inpLoad.classList.add('hidden');
         ui.inpLoadTon.classList.remove('hidden');
@@ -436,10 +549,12 @@ store.subscribe((state) => {
     }
 });
 
-// === 4. 仿真运行 ===
+// === 5. 仿真运行 ===
 function runSimulation() {
     const state = store.getState();
-    log(`🚀 仿真启动... [${state.topology}] [α=${state.excessAir}]`);
+    log(`🚀 仿真启动... [${state.topology}] [Fuel=${state.fuelType}]`);
+
+    if (ui.lblCop) ui.lblCop.innerText = "热泵机组 COP (HP COP)";
 
     const sys = new System(state);
     const res = sys.simulate();
@@ -447,7 +562,6 @@ function runSimulation() {
     if (res.error) {
         log(`❌ 错误: ${res.error}`, 'error');
         ui.resCop.innerText = "Err";
-        
         if(ui.btnGenReq) {
             ui.btnGenReq.disabled = true;
             ui.btnGenReq.classList.add('opacity-50', 'cursor-not-allowed');
@@ -465,23 +579,27 @@ function runSimulation() {
     ui.resCop.innerText = res.cop.toFixed(2);
     ui.resLift.innerText = (res.lift || 0).toFixed(1);
     
-    if (res.per !== undefined) ui.resPer.innerText = res.per.toFixed(2);
-    else ui.resPer.innerText = "--";
+    if (res.couplingData) {
+        renderCouplingDashboard(res.couplingData);
+    } else {
+        if (res.per !== undefined) renderStandardPER(res.per.toFixed(2));
+    }
 
     if (res.annualSaving !== undefined) {
         ui.resCost.innerText = res.costPerHour.toFixed(1);
         const unitCost = res.costPerHour / state.loadValue;
         if (ui.resUnitCost) ui.resUnitCost.innerText = unitCost.toFixed(3);
         
-        // [万元单位]
         const annualSaveWan = res.annualSaving / 10000;
         if (ui.resAnnualSave) {
             ui.resAnnualSave.innerText = `${annualSaveWan.toFixed(1)} 万`;
         }
         
-        // [决策建议]
-        if (res.recommendation) {
-            log(res.recommendation, annualSaveWan > 0 ? 'eco' : 'error');
+        if (res.decision) {
+            renderDecisionBanner(res.decision);
+            log(res.recommendation, res.decision.winner === 'HP' ? 'eco' : 'error');
+        } else {
+            if (res.recommendation) log(res.recommendation);
         }
 
         if (ui.resPayback) ui.resPayback.innerText = (res.payback > 20) ? ">20" : res.payback.toFixed(1);
@@ -490,20 +608,30 @@ function runSimulation() {
 
     if (res.recoveredHeat) {
         const totalCap = state.loadValue; 
-        ui.valCapTotal.innerText = totalCap.toFixed(0);
+        ui.valCapTotal.innerText = totalCap.toFixed(2);
         
         if (res.tonData) {
-            ui.valCapTon.innerText = res.tonData.total.toFixed(1);
+            ui.valCapTon.innerText = res.tonData.total.toFixed(3);
+            
+            let badgeHtml = '';
+            if (res.limitReason) {
+                const colorClass = res.limitReason.type === 'SOURCE' ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700';
+                badgeHtml = `<span class="ml-2 px-1.5 py-0.5 rounded text-[9px] font-bold ${colorClass} border border-transparent shadow-sm">${res.limitReason.text}</span>`;
+            }
+
             ui.valCapBreakdown.innerHTML = `
-                <div class="flex items-center gap-3 text-[10px] sm:text-xs">
-                    <div class="flex items-center gap-1">
-                        <span class="w-2 h-2 rounded-full bg-slate-300"></span>
-                        <span class="text-slate-500 font-medium">Blr: <b class="text-slate-700">${res.tonData.boiler.toFixed(1)}</b></span>
+                <div class="flex flex-col gap-1 w-full">
+                    <div class="flex items-center justify-between text-[10px] sm:text-xs">
+                        <div class="flex items-center gap-1">
+                            <span class="w-2 h-2 rounded-full bg-slate-300"></span>
+                            <span class="text-slate-500 font-medium">🔥 Aux.Blr: <b class="text-slate-700">${res.tonData.boiler.toFixed(3)}</b></span>
+                        </div>
+                        <div class="flex items-center gap-1">
+                            <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
+                            <span class="text-emerald-600 font-medium">HP: <b class="text-emerald-700">${res.tonData.hp.toFixed(3)}</b> t/h</span>
+                        </div>
                     </div>
-                    <div class="flex items-center gap-1">
-                        <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
-                        <span class="text-emerald-600 font-medium">HP: <b class="text-emerald-700">${res.tonData.hp.toFixed(1)}</b> t/h</span>
-                    </div>
+                    ${badgeHtml ? `<div class="text-center">${badgeHtml}</div>` : ''}
                 </div>`;
         } else {
             ui.valCapBreakdown.innerHTML = '';
@@ -512,13 +640,10 @@ function runSimulation() {
 
     updatePerformanceChart(state);
     
-    // 可视化参数准备
     let displaySupplyT;
     if (state.topology === TOPOLOGY.RECOVERY && res.reqData) {
-        // 方案 C: 显示热泵实际出口温度
         displaySupplyT = res.reqData.loadOut; 
     } else {
-        // 方案 A/B: 显示目标温度
         displaySupplyT = (state.mode === MODES.STEAM) 
             ? getSatTempFromPressure(state.targetTemp) 
             : state.targetTemp;
@@ -543,10 +668,8 @@ function log(msg, type = 'info') {
     ui.log.scrollTop = ui.log.scrollHeight;
 }
 
-// 初始化
 bindEvents();
 
-// 首次加载初始化 (Advanced Params)
 const initialState = store.getState();
 const initialAdvancedState = {
     fuelCalValue: parseFloat(ui.inpFuelCal.value) || 10.0,
@@ -556,15 +679,27 @@ const initialAdvancedState = {
     perfectionDegree: parseFloat(ui.selPerfection.value) || 0.45,
     boilerEff: parseFloat(ui.inpFuelEff.value) || 0.92,
     manualCop: parseFloat(ui.inpManualCop.value) || 3.5,
-    isManualCop: ui.chkManualCop.checked || false
+    isManualCop: ui.chkManualCop.checked || false,
+    elecPrice: parseFloat(ui.inpElecPrice.value) || 0.75,
+    fuelPrice: parseFloat(ui.inpFuelPrice.value) || 3.80,
+    capexHP: parseFloat(ui.inpCapexHP.value) || 2500,
+    capexBase: parseFloat(ui.inpCapexBase.value) || 200
 };
+
+populateUnitSelect(ui.selUnitCal, CAL_UNIT_OPTIONS, initialAdvancedState.fuelCalUnit);
+populateUnitSelect(ui.selUnitCo2, CO2_UNIT_OPTIONS, initialAdvancedState.fuelCo2Unit);
+
 store.setState(initialAdvancedState);
 
-// 首次计算 loadValueTons
 if (initialState.loadUnit === 'KW' && initialState.loadValue && !initialState.loadValueTons) {
     const tons = initialState.loadValue / 700; 
     store.setState({ loadValueTons: tons });
 }
 
 if (ui.selRecType) store.setState({ recoveryType: ui.selRecType.value });
+if (ui.selFuel) {
+    store.setState({ fuelType: ui.selFuel.value });
+    updatePriceInterlock(ui.selFuel.value);
+}
+
 store.notify(store.getState());

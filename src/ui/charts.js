@@ -14,7 +14,7 @@ export function updatePerformanceChart(state) {
 
     const { 
         topology, mode, steamStrategy, recoveryType, perfectionDegree, 
-        targetTemp, sourceTemp 
+        targetTemp, sourceTemp, loadOut 
     } = state;
 
     let labels = [];
@@ -22,17 +22,40 @@ export function updatePerformanceChart(state) {
     let xLabel = "";
     let chartTitle = "";
 
-    const realTargetTemp = (mode === MODES.STEAM) 
-        ? getSatTempFromPressure(targetTemp) 
-        : targetTemp;
+    // === [v9.1.3 Fix] 确定真实的物理目标温度 (Simulation Target) ===
+    // 系统仿真逻辑(System.js)与图表绘制逻辑必须统一冷凝基准
+    let simulationTargetTemp;
+    
+    if (topology === TOPOLOGY.RECOVERY) {
+        // 方案 C: 
+        // - 蒸汽模式: 目标是饱和温度 (由 targetTemp 压力计算)
+        // - 热水模式: 目标是 loadOut (预热/供水出口)
+        if (mode === MODES.STEAM) {
+            simulationTargetTemp = getSatTempFromPressure(targetTemp);
+        } else {
+            simulationTargetTemp = loadOut; 
+        }
+    } else {
+        // 方案 A/B:
+        // - 蒸汽模式: 目标是饱和温度
+        // - 热水模式: 目标是 targetTemp
+        if (mode === MODES.STEAM) {
+            simulationTargetTemp = getSatTempFromPressure(targetTemp);
+        } else {
+            simulationTargetTemp = targetTemp;
+        }
+    }
+
+    // 统一冷凝温度逻辑：目标温度 + 5K 安全余量 (与 HeatPump.js 保持一致)
+    const tCond = simulationTargetTemp + 5.0;
 
     // === 1. 余热回收模式 (Scheme C) ===
     if (topology === TOPOLOGY.RECOVERY) {
-        // [修复] X轴改为 "目标排烟温度" (30°C - 80°C)
+        // X轴: 目标排烟温度 (30°C - 80°C)
         xLabel = "目标排烟温度 (Target Exhaust Out, °C)";
         
         const techName = (recoveryType === RECOVERY_TYPES.ABS) ? '吸收式' : 'MVR热泵';
-        chartTitle = `深度回收特性: ${techName} (供热 ${realTargetTemp}°C)`;
+        chartTitle = `深度回收特性: ${techName} (供热目标 ${simulationTargetTemp.toFixed(1)}°C)`;
 
         for (let tOut = 30; tOut <= 80; tOut += 5) {
             labels.push(tOut);
@@ -40,11 +63,10 @@ export function updatePerformanceChart(state) {
             // 物理假设：换热器端差 5K
             // 如果把排烟降到 tOut，那么热泵蒸发温度约为 tOut - 5
             const tEvap = tOut - 5.0; 
-            const tCond = realTargetTemp + 5.0;
 
             const res = calculateCOP({
                 evapTemp: tEvap,
-                condTemp: tCond,
+                condTemp: tCond, // 使用修正后的统一冷凝温度
                 efficiency: perfectionDegree,
                 mode: mode,
                 strategy: steamStrategy,
@@ -64,9 +86,13 @@ export function updatePerformanceChart(state) {
                 const val = parseFloat(p.toFixed(1));
                 labels.push(val);
                 const tSat = getSatTempFromPressure(val);
+                
+                // 动态计算该压力下的冷凝温度
+                const tCondDynamic = tSat + 8.0; // 蒸汽工况通常余量稍大
+
                 const res = calculateCOP({
                     evapTemp: sourceTemp - 5,
-                    condTemp: tSat + 8,
+                    condTemp: tCondDynamic,
                     efficiency: perfectionDegree,
                     mode: MODES.STEAM,
                     strategy: steamStrategy,
@@ -76,12 +102,15 @@ export function updatePerformanceChart(state) {
             }
         } else {
             xLabel = "环境/热源温度 (°C)";
-            chartTitle = `变工况 COP 趋势 (供水 ${realTargetTemp}°C)`;
+            chartTitle = `变工况 COP 趋势 (供水 ${simulationTargetTemp.toFixed(1)}°C)`;
             for (let t = -20; t <= 40; t += 5) {
                 labels.push(t);
+                
+                // 空气源/水源 蒸发温度估算
+                // 方案 A/B 统一假设 tEvap = tSource - 5 (简化图表逻辑)
                 const res = calculateCOP({
                     evapTemp: t - 5,
-                    condTemp: realTargetTemp + 5,
+                    condTemp: tCond,
                     efficiency: perfectionDegree,
                     mode: MODES.WATER,
                     strategy: steamStrategy, 
@@ -97,7 +126,7 @@ export function updatePerformanceChart(state) {
         data: {
             labels,
             datasets: [{
-                label: 'System COP',
+                label: 'Heat Pump COP', // [UI Fix] 明确是热泵机组 COP
                 data: dataCOP,
                 borderColor: (topology === TOPOLOGY.RECOVERY && recoveryType === RECOVERY_TYPES.ABS) ? '#f59e0b' : '#10b981', 
                 borderWidth: 3,
