@@ -2,6 +2,8 @@
 import '../style.css'; 
 import { store } from '../state/store.js';
 import { System } from '../models/System.js';
+import { Boiler } from '../models/Boiler.js'; // 用于计算烟气量
+import { fetchSchemeC } from '../core/api.js'; // 用于呼叫 Python
 import { updatePerformanceChart } from './charts.js';
 import { renderSystemDiagram } from './diagram.js'; 
 import { MODES, TOPOLOGY, STRATEGIES, FUEL_DB } from '../core/constants.js';
@@ -125,6 +127,7 @@ const ui = {
     valCapTon: document.getElementById('val-cap-ton'),
     valCapBreakdown: document.getElementById('val-cap-breakdown'),
     
+    // 选型单相关按钮 (现在已隐藏，但保留引用以防报错)
     btnGenReq: document.getElementById('btn-gen-req'),
     modalReq: document.getElementById('modal-requisition'),
     btnCloseModal: document.getElementById('btn-close-modal'),
@@ -142,6 +145,7 @@ const ui = {
 
 let currentReqData = null;
 
+// === 辅助函数 ===
 function resetFuelParams(fuelType) {
     const db = FUEL_DB[fuelType] || FUEL_DB['NATURAL_GAS'];
     let bestCalUnit = 'MJ/kg'; 
@@ -205,27 +209,18 @@ function renderDecisionBanner(decision) {
     }
 }
 
-// [FIXED] 获取或建立稳定的效率卡片容器
 function getEfficiencyCardContainer() {
-    // 尝试通过 ID 获取
     let container = document.getElementById('efficiency-card-panel');
-    
-    // 如果没有 ID，说明是初次加载，尝试通过 ui.resPer 查找
     if (!container && ui.resPer) {
-        // 找到包含 res-per 的最近的卡片容器 (bg-white ...)
         container = ui.resPer.closest('.bg-white.p-4');
-        if (container) {
-            // 赋予永久 ID
-            container.id = 'efficiency-card-panel';
-        }
+        if (container) container.id = 'efficiency-card-panel';
     }
     return container;
 }
 
-// [FIXED] 渲染耦合效能仪表盘
 function renderCouplingDashboard(couplingData) {
     const parent = getEfficiencyCardContainer();
-    if (!parent) return; // 找不到容器，放弃渲染
+    if (!parent) return; 
 
     const headerHtml = `<div class="text-[10px] uppercase font-bold text-slate-400 tracking-wider">综合效能对比 (EFFICIENCY)</div>`;
     const { site, per } = couplingData;
@@ -252,7 +247,6 @@ function renderCouplingDashboard(couplingData) {
     parent.innerHTML = headerHtml + bodyHtml;
 }
 
-// [FIXED] 恢复标准 PER 显示
 function renderStandardPER(val) {
     const parent = getEfficiencyCardContainer();
     if (!parent) return;
@@ -262,9 +256,66 @@ function renderStandardPER(val) {
         <div class="text-2xl font-bold text-violet-700 mt-1" id="res-per">${val}</div>
         <div class="text-[10px] text-violet-500 font-medium" id="desc-res-3">Efficiency</div>
     `;
-    
-    // 重要：重新绑定 ui.resPer，防止下次找不到子元素时引用错误
     ui.resPer = document.getElementById('res-per');
+}
+
+/**
+ * [新增] 直接在界面上渲染选型参数 (调试用)
+ */
+function renderTechSpecDirectly(reqData) {
+    const costEl = document.getElementById('res-cost');
+    if (!costEl) return;
+    
+    const container = costEl.closest('.bg-white.rounded-xl');
+    if (!container) return;
+
+    const oldPanel = document.getElementById('debug-tech-panel');
+    if (oldPanel) oldPanel.remove();
+
+    if (!reqData) return;
+
+    const panel = document.createElement('div');
+    panel.id = 'debug-tech-panel';
+    panel.className = "mt-4 mx-4 mb-4 p-3 bg-slate-100 rounded-lg border border-slate-200 text-xs font-mono shadow-inner";
+    
+    panel.innerHTML = `
+        <div class="flex items-center justify-between mb-2 border-b border-slate-300 pb-1">
+            <span class="font-bold text-slate-600">🛠️ 厂家选型单参数 (DEBUG)</span>
+            <span class="text-[10px] text-slate-400">Auto-Generated</span>
+        </div>
+        <div class="grid grid-cols-2 gap-x-4 gap-y-2">
+            <div class="col-span-2 sm:col-span-1">
+                <div class="text-[10px] text-slate-400">热源 (Source)</div>
+                <div class="font-bold text-slate-700 truncate">${reqData.sourceType}</div>
+                <div class="text-slate-600">
+                    <span class="font-bold">${reqData.sourceIn.toFixed(1)}°C</span> 
+                    <span class="text-slate-400">-></span> 
+                    <span class="font-bold">${reqData.sourceOut.toFixed(1)}°C</span>
+                </div>
+            </div>
+            
+            <div class="col-span-2 sm:col-span-1">
+                <div class="text-[10px] text-slate-400">热汇 (Load)</div>
+                <div class="font-bold text-slate-700 truncate">${reqData.loadType}</div>
+                <div class="text-slate-600">
+                    <span class="font-bold">${reqData.loadIn.toFixed(1)}°C</span> 
+                    <span class="text-slate-400">-></span> 
+                    <span class="font-bold">${reqData.loadOut.toFixed(1)}°C</span>
+                </div>
+            </div>
+
+            <div class="col-span-2 border-t border-slate-300 pt-1 mt-1 flex justify-between items-center">
+                <span class="text-slate-500">制热量 (Capacity):</span>
+                <span class="text-sm font-bold text-indigo-600">${reqData.capacity.toLocaleString(undefined, {maximumFractionDigits: 0})} kW</span>
+            </div>
+        </div>
+    `;
+
+    container.appendChild(panel);
+    
+    // 顺手隐藏旧按钮
+    const btn = document.getElementById('btn-gen-req');
+    if (btn) btn.style.display = 'none'; 
 }
 
 // === 3. 事件绑定 ===
@@ -388,36 +439,8 @@ function bindEvents() {
 
     if (ui.btnCalc) ui.btnCalc.addEventListener('click', () => runSimulation());
 
-    if (ui.btnGenReq) {
-        ui.btnGenReq.addEventListener('click', () => {
-            if (!currentReqData) {
-                alert('请先运行仿真以生成数据');
-                return;
-            }
-            ui.reqSourceType.innerText = currentReqData.sourceType;
-            ui.reqSourceIn.innerText = currentReqData.sourceIn.toFixed(1);
-            ui.reqSourceOut.innerText = currentReqData.sourceOut.toFixed(1);
-            ui.reqLoadType.innerText = currentReqData.loadType;
-            ui.reqLoadIn.innerText = currentReqData.loadIn.toFixed(1);
-            ui.reqLoadOut.innerText = currentReqData.loadOut.toFixed(1);
-            ui.reqCapacity.innerText = currentReqData.capacity.toLocaleString(undefined, { maximumFractionDigits: 0 });
-            ui.modalReq.classList.remove('hidden');
-        });
-    }
-
+    // 弹窗相关事件保留，防止找不到ID报错，但按钮实际上会被 renderTechSpecDirectly 隐藏
     if (ui.btnCloseModal) ui.btnCloseModal.addEventListener('click', () => ui.modalReq.classList.add('hidden'));
-
-    if (ui.btnCopyReq) {
-        ui.btnCopyReq.addEventListener('click', () => {
-            if (!currentReqData) return;
-            const text = `【工业热泵选型参数】\n热源: ${currentReqData.sourceType}\n温度: ${currentReqData.sourceIn.toFixed(1)} -> ${currentReqData.sourceOut.toFixed(1)}°C\n负荷: ${currentReqData.loadType}\n温度: ${currentReqData.loadIn.toFixed(1)} -> ${currentReqData.loadOut.toFixed(1)}°C\n制热量: ${currentReqData.capacity.toFixed(0)} kW`;
-            navigator.clipboard.writeText(text).then(() => {
-                const originalText = ui.btnCopyReq.innerText;
-                ui.btnCopyReq.innerText = "已复制!";
-                setTimeout(() => ui.btnCopyReq.innerText = originalText, 2000);
-            });
-        });
-    }
 }
 
 // === 4. 界面渲染 ===
@@ -549,63 +572,174 @@ store.subscribe((state) => {
     }
 });
 
-// === 5. 仿真运行 ===
-function runSimulation() {
+// === 5. 仿真运行逻辑 ===
+
+// 5.1 Python 呼叫专用函数
+async function runPythonSchemeC(state) {
+    // 1. 准备数据: 计算烟气量
+    const boiler = new Boiler({
+        fuelType: state.fuelType,
+        efficiency: state.boilerEff,
+        loadKW: state.loadValue, 
+        flueIn: state.flueIn,
+        flueOut: state.flueOut,
+        excessAir: state.excessAir,
+        fuelCalValue: state.fuelCalValue,
+        fuelCo2Value: state.fuelCo2Value
+    });
+    const sourcePot = boiler.calculateSourcePotential();
+    
+    // 2. 准备数据: 计算水流量
+    const deltaT_Water = state.loadOut - state.loadIn; 
+    if (deltaT_Water <= 0) throw new Error("水温差必须大于 0");
+    const flow_kg_h = (state.loadValue * 3600) / (4.187 * deltaT_Water);
+
+    // 3. 组装 Payload
+    const payload = {
+        sink_in_temp: state.loadIn,
+        sink_out_target: state.loadOut, 
+        sink_flow_kg_h: flow_kg_h,      
+        source_in_temp: state.flueIn,
+        source_flow_vol: sourcePot.flowVol, 
+        efficiency: state.perfectionDegree,
+        mode: state.mode,
+        fuel_type: state.fuelType
+    };
+    
+    log(`📡 呼叫 Python: 流量=${flow_kg_h.toFixed(0)}kg/h, 烟气=${sourcePot.flowVol.toFixed(0)}m3/h`);
+
+    // 4. 调用 API
+    const pyRes = await fetchSchemeC(payload);
+
+    // 5. 检查收敛状态
+    if (pyRes.status !== 'converged') {
+        throw new Error(pyRes.reason || "计算未收敛 (热源不足以支撑该负荷)");
+    }
+
+    // 6. 结果适配 (Python物理结果 -> UI经济结果)
+    const recoveredHeat = pyRes.target_load_kw;
+    const driveEnergy = recoveredHeat / pyRes.final_cop;
+    
+    const baseline = boiler.calculateBaseline(state.fuelPrice);
+    const savedFuelMJ = (recoveredHeat / state.boilerEff) * 3.6;
+    const savedFuelUnit = savedFuelMJ / state.fuelCalValue;
+    const savedCost = savedFuelUnit * state.fuelPrice;
+    
+    // 假设电驱动 MVR
+    const driveCost = driveEnergy * state.elecPrice; 
+    
+    const hourlySaving = savedCost - driveCost;
+    const annualSaving = hourlySaving * state.annualHours;
+    const payback = (recoveredHeat * state.capexHP) / annualSaving;
+
+    const res = {
+        cop: pyRes.final_cop,
+        lift: (state.loadOut + 5) - (pyRes.required_source_out - 5),
+        recoveredHeat: recoveredHeat,
+        annualSaving: annualSaving,
+        costPerHour: baseline.costPerHour - hourlySaving,
+        payback: payback,
+        
+        reqData: {
+            sourceType: `烟气 (Flue Gas) @ ${state.flueIn}°C`, // 补全 Type 字段
+            loadType: state.mode === MODES.STEAM ? "补水预热 (Pre-heat)" : "热水 (Hot Water)", // 补全 Type 字段
+            sourceIn: state.flueIn,
+            sourceOut: pyRes.required_source_out, // 🟢 Python 算出的排烟
+            loadIn: state.loadIn, 
+            loadOut: state.loadOut,
+            capacity: recoveredHeat
+        },
+        
+        co2ReductionRate: 0, 
+        per: 0,
+        couplingData: { site: {before:0, after:0, delta:0}, per: {before:0, after:0, delta:0} },
+        decision: { winner: annualSaving>0?'HP':'BASE', level: 'STRONG', title: 'Python Analysis', desc: '基于后端 AI 求解器结果' }
+    };
+    
+    handleSimulationResult(res, state);
+    log(`✅ Python 求解成功: 排烟 ${pyRes.required_source_out.toFixed(1)}°C`, 'eco');
+}
+
+// 5.2 [智能双模] 仿真主入口
+async function runSimulation() {
     const state = store.getState();
-    log(`🚀 仿真启动... [${state.topology}] [Fuel=${state.fuelType}]`);
+    log(`🚀 仿真启动... [${state.topology}]`);
+    
+    if (ui.lblCop) ui.lblCop.innerText = "热泵机组 COP";
+    ui.resCop.innerText = "..."; 
 
-    if (ui.lblCop) ui.lblCop.innerText = "热泵机组 COP (HP COP)";
+    // 本地估算函数 (Fallback)
+    const runLocalFallback = (reason) => {
+        log(`⚠️ ${reason} -> 切换至 JS 估算模式`, 'warning');
+        const sys = new System(state);
+        const res = sys.simulate();
+        res.limitReason = res.limitReason || { type: 'SOURCE', text: '🔥 Source Limited (热源不足)' };
+        handleSimulationResult(res, state);
+    };
 
-    const sys = new System(state);
-    const res = sys.simulate();
+    if (state.topology === TOPOLOGY.RECOVERY) {
+        try {
+            await runPythonSchemeC(state);
+        } catch (err) {
+            const errorMsg = err.message || "";
+            // 智能降级: 如果是热源不足导致的无法收敛，切回 JS 模式
+            if (errorMsg.includes("无法收敛") || errorMsg.includes("热源不足") || errorMsg.includes("Failed")) {
+                runLocalFallback("热源不足以支撑全额预热目标");
+            } else {
+                log(`❌ 系统错误: ${errorMsg}`, 'error');
+                ui.resCop.innerText = "Err";
+            }
+        }
+    } else {
+        // 标准模式直接用 JS
+        const sys = new System(state);
+        const res = sys.simulate();
+        handleSimulationResult(res, state);
+    }
+}
 
+// 5.3 通用结果处理与 UI 渲染
+function handleSimulationResult(res, state) {
+    // 1. 错误处理
     if (res.error) {
         log(`❌ 错误: ${res.error}`, 'error');
         ui.resCop.innerText = "Err";
-        if(ui.btnGenReq) {
-            ui.btnGenReq.disabled = true;
-            ui.btnGenReq.classList.add('opacity-50', 'cursor-not-allowed');
-        }
         return;
     }
 
+    // 2. 基础数据更新
     currentReqData = res.reqData;
-    
-    if(ui.btnGenReq) {
-        ui.btnGenReq.disabled = false;
-        ui.btnGenReq.classList.remove('opacity-50', 'cursor-not-allowed');
-    }
 
     ui.resCop.innerText = res.cop.toFixed(2);
     ui.resLift.innerText = (res.lift || 0).toFixed(1);
-    
-    if (res.couplingData) {
+
+    // 3. 耦合效能更新
+    if (res.couplingData && res.couplingData.site) {
         renderCouplingDashboard(res.couplingData);
     } else {
-        if (res.per !== undefined) renderStandardPER(res.per.toFixed(2));
+         if (res.per !== undefined && typeof renderStandardPER === 'function') {
+             renderStandardPER(res.per.toFixed(2));
+         }
     }
 
+    // 4. 经济性分析更新
     if (res.annualSaving !== undefined) {
         ui.resCost.innerText = res.costPerHour.toFixed(1);
+        
+        // 更新单位成本
         const unitCost = res.costPerHour / state.loadValue;
         if (ui.resUnitCost) ui.resUnitCost.innerText = unitCost.toFixed(3);
-        
-        const annualSaveWan = res.annualSaving / 10000;
-        if (ui.resAnnualSave) {
-            ui.resAnnualSave.innerText = `${annualSaveWan.toFixed(1)} 万`;
-        }
-        
-        if (res.decision) {
-            renderDecisionBanner(res.decision);
-            log(res.recommendation, res.decision.winner === 'HP' ? 'eco' : 'error');
-        } else {
-            if (res.recommendation) log(res.recommendation);
-        }
 
+        const annualSaveWan = res.annualSaving / 10000;
+        if (ui.resAnnualSave) ui.resAnnualSave.innerText = `${annualSaveWan.toFixed(1)} 万`;
+        
+        if (res.decision) renderDecisionBanner(res.decision);
+        
         if (ui.resPayback) ui.resPayback.innerText = (res.payback > 20) ? ">20" : res.payback.toFixed(1);
         if (ui.resCo2Red) ui.resCo2Red.innerText = res.co2ReductionRate.toFixed(1);
     }
 
+    // 5. 系统产能更新
     if (res.recoveredHeat) {
         const totalCap = state.loadValue; 
         ui.valCapTotal.innerText = totalCap.toFixed(2);
@@ -638,32 +772,42 @@ function runSimulation() {
         }
     }
 
+    // 6. 图表更新
     updatePerformanceChart(state);
-    
+
+    // 7. 系统图更新
     let displaySupplyT;
+    let displaySourceOut = state.flueOut; 
+
     if (state.topology === TOPOLOGY.RECOVERY && res.reqData) {
-        displaySupplyT = res.reqData.loadOut; 
+        displaySupplyT = res.reqData.loadOut;
+        if (res.reqData.sourceOut) displaySourceOut = res.reqData.sourceOut;
     } else {
         displaySupplyT = (state.mode === MODES.STEAM) 
             ? getSatTempFromPressure(state.targetTemp) 
             : state.targetTemp;
+        displaySourceOut = state.sourceOut;
     }
 
     renderSystemDiagram('diagram-container', {
         topology: state.topology,
         tSource: state.sourceTemp,
         tDisplaySource: state.topology === TOPOLOGY.RECOVERY ? state.flueIn : state.sourceTemp,
+        tDisplaySourceOut: displaySourceOut, 
         tSupply: displaySupplyT,
         recoveredKW: res.recoveredHeat || 0
     });
 
-    log(`✅ 计算完成. COP=${res.cop}`, 'eco');
+    // 8. 调试模式：直接在界面显示选型参数
+    renderTechSpecDirectly(res.reqData);
 }
 
 function log(msg, type = 'info') {
     const time = new Date().toLocaleTimeString('en-GB');
     let clr = 'text-green-400';
     if (type === 'error') clr = 'text-red-400';
+    else if (type === 'warning') clr = 'text-amber-400'; // 增加 warning 颜色
+    
     ui.log.innerHTML += `<div class="${clr} border-l-2 border-transparent pl-1"><span class="opacity-50">[${time}]</span> ${msg}</div>`;
     ui.log.scrollTop = ui.log.scrollHeight;
 }

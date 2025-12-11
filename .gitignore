@@ -22,3 +22,8 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+# Python ignores
+ies_backend/venv/
+ies_backend/__pycache__/
+*.pyc
+.env
