@@ -1,5 +1,6 @@
 // src/core/api.js
-const API_BASE = "http://127.0.0.1:8000";
+// 🟢 换成这个新的云端地址
+const API_BASE = "https://hybrid-boiler-heat-pump-systems.onrender.com";
 
 /**
  * 呼叫 Python 后端执行 Scheme C (逆向平衡)
