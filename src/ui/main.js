@@ -329,11 +329,26 @@ function renderTechSpecDirectly(reqData) {
         const comp = reqData.sourceComposition;
         // 根据成分类型构建显示字符串
         const parts = [];
-        if (comp.h2o !== undefined && comp.h2o > 0) parts.push(`H₂O: ${comp.h2o.toFixed(1)}%`);
-        if (comp.co2 !== undefined && comp.co2 > 0) parts.push(`CO₂: ${comp.co2.toFixed(2)}%`);
-        if (comp.n2 !== undefined && comp.n2 > 0) parts.push(`N₂: ${comp.n2.toFixed(1)}%`);
-        if (comp.o2 !== undefined && comp.o2 > 0) parts.push(`O₂: ${comp.o2.toFixed(1)}%`);
-        if (comp.ar !== undefined && comp.ar > 0) parts.push(`Ar: ${comp.ar.toFixed(2)}%`);
+        
+        // 🔧 修复：确保值是数字类型再调用toFixed
+        const safeToFixed = (value, decimals) => {
+            if (value === null || value === undefined) return null;
+            const num = typeof value === 'number' ? value : parseFloat(value);
+            return isNaN(num) ? null : num.toFixed(decimals);
+        };
+        
+        const h2o = safeToFixed(comp.h2o, 1);
+        const co2 = safeToFixed(comp.co2, 2);
+        const n2 = safeToFixed(comp.n2, 1);
+        const o2 = safeToFixed(comp.o2, 1);
+        const ar = safeToFixed(comp.ar, 2);
+        
+        if (h2o !== null && parseFloat(h2o) > 0) parts.push(`H₂O: ${h2o}%`);
+        if (co2 !== null && parseFloat(co2) > 0) parts.push(`CO₂: ${co2}%`);
+        if (n2 !== null && parseFloat(n2) > 0) parts.push(`N₂: ${n2}%`);
+        if (o2 !== null && parseFloat(o2) > 0) parts.push(`O₂: ${o2}%`);
+        if (ar !== null && parseFloat(ar) > 0) parts.push(`Ar: ${ar}%`);
+        
         compositionStr = parts.length > 0 ? parts.join(', ') : "N/A";
     }
     
