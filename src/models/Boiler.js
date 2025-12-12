@@ -1,7 +1,7 @@
 // src/models/Boiler.js
 import { FUEL_DB } from '../core/constants.js';
 // [v9.1] 引入物理计算函数
-import { calculateActualFlueVolume, calculateAdjustedDewPoint } from '../core/physics.js';
+import { calculateActualFlueVolume, calculateAdjustedDewPoint, calculateWaterCondensation } from '../core/physics.js';
 
 export class Boiler {
     constructor(config) {
@@ -158,6 +158,7 @@ export class Boiler {
         );
         
         // 只有当 排烟温度 < 实际露点 时，才产生潜热
+        let waterCondensation = null;
         if (flueOut < actualDewPoint) {
             let maxLatentRatio = 0.0;
             // 简单的燃料潜热比例估算
@@ -166,12 +167,44 @@ export class Boiler {
 
             const maxLatentKW = inputKW * maxLatentRatio;
             
-            // 线性插值模型：(露点 -> 30度) 对应 (0% -> 100% 潜热释放)
-            let condFactor = (actualDewPoint - flueOut) / (actualDewPoint - 30);
+            // 线性插值模型：(露点 -> 5度) 对应 (0% -> 100% 潜热释放)
+            let condFactor = (actualDewPoint - flueOut) / (actualDewPoint - 5);
             if (condFactor > 1) condFactor = 1;
             if (condFactor < 0) condFactor = 0;
             
             latent = maxLatentKW * condFactor;
+            
+            // 🔧 新增：计算水分析出量
+            // 估算烟气中水蒸气体积百分比（基于燃料类型和过量空气系数）
+            let h2oVolPercent = 0;
+            const alpha = excessAir || 1.2;
+            
+            if (this.config.fuelType === 'NATURAL_GAS') {
+                // 天然气：CH4 + 2O2 -> CO2 + 2H2O
+                // 理论：1 m3 CH4 -> 1 m3 CO2 + 2 m3 H2O + 7.52 m3 N2
+                const theoCO2 = 1.0;
+                const theoH2O = 2.0;
+                const theoN2 = 7.52;
+                const excessO2 = (alpha - 1.0) * 2.0;
+                const excessN2 = (alpha - 1.0) * 7.52;
+                const totalVol = theoCO2 + theoH2O + theoN2 + excessO2 + excessN2;
+                h2oVolPercent = (theoH2O / totalVol) * 100;
+            } else if (this.config.fuelType === 'COAL') {
+                h2oVolPercent = 8.0;
+            } else if (this.config.fuelType === 'DIESEL') {
+                h2oVolPercent = 12.0;
+            } else {
+                h2oVolPercent = 10.0; // 默认值
+            }
+            
+            // 计算水分析出量
+            waterCondensation = calculateWaterCondensation(
+                flueIn,
+                flueOut,
+                flueGasVol,
+                h2oVolPercent,
+                actualDewPoint
+            );
         }
 
         return {
@@ -181,7 +214,8 @@ export class Boiler {
             flowVol: flueGasVol,
             dewPoint: actualDewPoint, // 返回动态露点供 UI 显示
             flueIn,
-            flueOut
+            flueOut,
+            waterCondensation: waterCondensation // 🔧 新增：返回水分析出数据
         };
     }
 }

@@ -97,3 +97,100 @@ export function calculateAdjustedDewPoint(refDewPoint, alpha) {
     
     return parseFloat(adjusted.toFixed(1));
 }
+
+/**
+ * 计算水蒸气的饱和压力 (Antoine方程)
+ * @param {number} tempC - 温度 (°C)
+ * @returns {number} 饱和压力 (kPa)
+ */
+export function calculateWaterVaporSaturationPressure(tempC) {
+    // Antoine方程: log10(P) = A - B/(C + T)
+    // 对于水: A=8.07131, B=1730.63, C=233.426 (T in °C, P in mmHg)
+    const A = 8.07131;
+    const B = 1730.63;
+    const C = 233.426;
+    const T = tempC;
+    
+    const log10P_mmHg = A - B / (C + T);
+    const P_mmHg = Math.pow(10, log10P_mmHg);
+    const P_kPa = P_mmHg * 0.133322; // 1 mmHg = 0.133322 kPa
+    
+    return P_kPa;
+}
+
+/**
+ * 计算烟气冷却过程中的水分析出量
+ * @param {number} flueInTemp - 初始排烟温度 (°C)
+ * @param {number} flueOutTemp - 最终排烟温度 (°C)
+ * @param {number} flueVolFlow - 烟气体积流量 (m³/h, 标准状态)
+ * @param {number} h2oVolPercent - 烟气中水蒸气体积百分比 (%)
+ * @param {number} dewPoint - 露点温度 (°C)
+ * @returns {Object} {condensedWater: 析出水量 (kg/h), initialWater: 初始水蒸气量 (kg/h), finalWater: 最终水蒸气量 (kg/h)}
+ */
+export function calculateWaterCondensation(flueInTemp, flueOutTemp, flueVolFlow, h2oVolPercent, dewPoint) {
+    // 如果最终温度 >= 露点，没有水分析出
+    if (flueOutTemp >= dewPoint) {
+        return {
+            condensedWater: 0,
+            initialWater: 0,
+            finalWater: 0
+        };
+    }
+    
+    // 标准状态参数
+    const T_STP = 273.15; // 0°C = 273.15 K
+    const P_STP = 101.325; // 标准大气压 (kPa)
+    const R = 0.287; // 干空气气体常数 (kJ/(kg·K))
+    const R_H2O = 0.4615; // 水蒸气气体常数 (kJ/(kg·K))
+    
+    // 1. 计算初始水蒸气质量
+    // 水蒸气体积流量 (标准状态)
+    const h2oVolFlow_STP = flueVolFlow * (h2oVolPercent / 100);
+    
+    // 水蒸气在标准状态下的密度 (kg/m³)
+    // 理想气体状态方程: ρ = P / (R * T)
+    const h2oDensity_STP = P_STP / (R_H2O * T_STP); // kg/m³
+    const initialWater = h2oVolFlow_STP * h2oDensity_STP; // kg/h
+    
+    // 2. 计算最终温度下的饱和水蒸气分压
+    const satPressure = calculateWaterVaporSaturationPressure(flueOutTemp); // kPa
+    
+    // 3. 计算初始水蒸气分压
+    const initialWaterVaporPressure = P_STP * (h2oVolPercent / 100); // kPa
+    
+    // 4. 计算最终温度下的水蒸气分压
+    // 当温度低于露点时，水蒸气会凝结，最终分压等于该温度下的饱和压力
+    // 但不能超过初始分压（如果饱和压力大于初始分压，说明没有凝结）
+    const finalWaterVaporPressure = Math.min(satPressure, initialWaterVaporPressure);
+    
+    // 5. 计算最终温度下的水蒸气质量
+    // 🔧 修复：正确计算最终水蒸气质量
+    // 
+    // 物理过程：当温度低于露点时，水蒸气会凝结，最终的水蒸气分压等于该温度下的饱和压力
+    // 
+    // 正确方法：基于烟气总体积计算最终水蒸气质量
+    // 假设烟气总体积（包括干烟气和水蒸气）在最终温度下 = flueVolFlow * (最终温度/初始温度)
+    // 最终水蒸气体积（在最终温度下）= 烟气总体积 * (最终分压 / 总压)
+    //                                = flueVolFlow * (最终温度/初始温度) * (最终分压 / P_STP)
+    // 
+    // 最终水蒸气质量 = 最终分压 * 最终水蒸气体积 / (R_H2O * 最终温度)
+    //                = 最终分压 * [flueVolFlow * (最终温度/初始温度) * (最终分压 / P_STP)] / (R_H2O * 最终温度)
+    //                = 最终分压^2 * flueVolFlow / (R_H2O * P_STP * 初始温度)
+    //                = 最终分压^2 * flueVolFlow / (R_H2O * P_STP * T_STP)
+    
+    const T_final_K = flueOutTemp + 273.15;
+    
+    // 🔧 修复：使用基于烟气总体积的计算方法
+    // 最终水蒸气质量 = 最终分压^2 * 烟气总体积 / (R_H2O * 总压 * 初始温度)
+    const finalWater = (finalWaterVaporPressure * finalWaterVaporPressure * flueVolFlow) / 
+                       (R_H2O * P_STP * T_STP); // kg/h
+    
+    // 5. 计算析出的水量
+    const condensedWater = Math.max(0, initialWater - finalWater);
+    
+    return {
+        condensedWater: parseFloat(condensedWater.toFixed(2)),
+        initialWater: parseFloat(initialWater.toFixed(2)),
+        finalWater: parseFloat(finalWater.toFixed(2))
+    };
+}

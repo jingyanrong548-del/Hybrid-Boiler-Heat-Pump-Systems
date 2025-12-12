@@ -27,3 +27,6 @@ class SchemeCRequest(BaseModel):
     # 🔧 新增：手动COP锁定支持
     is_manual_cop: bool = False  # 是否启用手动COP锁定
     manual_cop: float = 3.5      # 手动COP值
+    
+    # 🔧 新增：过量空气系数（用于计算水分析出）
+    excess_air: float = 1.2       # 过量空气系数，默认1.2

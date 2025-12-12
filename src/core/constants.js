@@ -27,7 +27,7 @@ export const RECOVERY_TYPES = {
 
 // === 物理极值与限制 ===
 export const LIMITS = {
-    MIN_FLUE_TEMP: 30.0,   // 最低排烟温度 (防止酸露点腐蚀的硬底线，虽然计算上允许更低)
+    MIN_FLUE_TEMP: 5.0,    // 最低排烟温度 (防止酸露点腐蚀的硬底线，虽然计算上允许更低)
     MAX_COND_TEMP: 160.0,  // 当前民用/工业热泵的技术上限
     MIN_EVAP_TEMP: -30.0,  // 空气源极限
     MIN_LIFT_DELTA: 10.0   // 最小温升 (过小会导致压缩机控制不稳)

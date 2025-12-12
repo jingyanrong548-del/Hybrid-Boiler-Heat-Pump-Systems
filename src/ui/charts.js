@@ -77,7 +77,7 @@ export function updatePerformanceChart(state, actualResult = null) {
 
     // === 1. 余热回收模式 (Scheme C) ===
     if (topology === TOPOLOGY.RECOVERY) {
-        // X轴: 目标排烟温度 (30°C - 80°C)
+        // X轴: 目标排烟温度 (5°C - 80°C)
         xLabel = "目标排烟温度 (Target Exhaust Out, °C)";
         
         const techName = (recoveryType === RECOVERY_TYPES.ABS) ? '吸收式' : 'MVR热泵';

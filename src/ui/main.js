@@ -7,7 +7,7 @@ import { fetchSchemeC } from '../core/api.js'; // 用于呼叫 Python
 import { updatePerformanceChart } from './charts.js';
 import { renderSystemDiagram } from './diagram.js'; 
 import { MODES, TOPOLOGY, STRATEGIES, FUEL_DB, RECOVERY_TYPES } from '../core/constants.js';
-import { getSatTempFromPressure, convertSteamTonsToKW } from '../core/physics.js';
+import { getSatTempFromPressure, convertSteamTonsToKW, calculateWaterCondensation, calculateAdjustedDewPoint } from '../core/physics.js';
 import { calculateCOP } from '../core/cycles.js';
 
 // === Unit Options ===
@@ -407,6 +407,23 @@ function renderTechSpecDirectly(reqData) {
                 <div class="text-[10px] text-slate-400 mb-1">热汇流量 (Sink Flow)</div>
                 <div class="text-xs font-bold text-slate-700">${sinkFlowMassStr}</div>
             </div>
+            
+            ${reqData.waterCondensation ? `
+            <div class="col-span-2 border-t border-slate-300 pt-2 mt-1">
+                <div class="text-[10px] text-slate-400 mb-1">水分析出量 (Water Condensation)</div>
+                <div class="text-xs font-bold text-blue-600">
+                    ${reqData.waterCondensation.condensedWater > 0 
+                        ? `${reqData.waterCondensation.condensedWater.toFixed(2)} kg/h` 
+                        : '无析出'}
+                </div>
+                ${reqData.waterCondensation.condensedWater > 0 ? `
+                <div class="text-[9px] text-slate-500 mt-1">
+                    初始水蒸气: ${reqData.waterCondensation.initialWater.toFixed(2)} kg/h → 
+                    最终水蒸气: ${reqData.waterCondensation.finalWater.toFixed(2)} kg/h
+                </div>
+                ` : ''}
+            </div>
+            ` : ''}
         </div>
     `;
 
@@ -926,7 +943,9 @@ async function runPythonSchemeC(state) {
         recovery_type: state.recoveryType,  // 🔧 新增：传递热泵类型
         // 🔧 新增：传递手动COP锁定参数
         is_manual_cop: state.isManualCop,
-        manual_cop: state.manualCop
+        manual_cop: state.manualCop,
+        // 🔧 新增：传递过量空气系数（用于计算水分析出）
+        excess_air: state.excessAir || 1.2
     };
     
     log(`📡 呼叫 Python: 流量=${flow_kg_h.toFixed(0)}kg/h, 烟气=${sourcePot.flowVol.toFixed(0)}m3/h`);
@@ -945,6 +964,49 @@ async function runPythonSchemeC(state) {
     // 🔧 修复：如果热源不足，使用实际能达到的负荷和出水温度
     const recoveredHeat = pyRes.target_load_kw;
     const actualLoadOut = pyRes.actual_sink_out || state.loadOut;  // 如果热源不足，使用实际出水温度
+    const actualFlueOut = pyRes.required_source_out;  // 实际排烟温度
+    
+    // 🔧 新增：从后端获取水分析出数据（如果后端返回了）
+    const waterCondensationFromBackend = pyRes.water_condensation || null;
+    
+    // 🔧 关键修复：无论后端是否返回，都使用实际排烟温度重新计算，确保水分析出量随实际排烟温度变化
+    // 这样可以确保当目标排烟温度变化时，水分析出量能正确更新
+    let finalWaterCondensation = null;
+    if (state.fuelType !== 'ELECTRICITY') {
+        // 使用实际排烟温度重新计算水分析出量
+        const fuelData = FUEL_DB[state.fuelType];
+        if (fuelData) {
+            const alpha = state.excessAir || 1.2;
+            const actualDewPoint = calculateAdjustedDewPoint(fuelData.dewPointRef, alpha);
+            
+            // 计算烟气中水蒸气体积百分比
+            let h2oVolPercent = 0;
+            if (state.fuelType === 'NATURAL_GAS') {
+                const theoCO2 = 1.0;
+                const theoH2O = 2.0;
+                const theoN2 = 7.52;
+                const excessO2 = (alpha - 1.0) * 2.0;
+                const excessN2 = (alpha - 1.0) * 7.52;
+                const totalVol = theoCO2 + theoH2O + theoN2 + excessO2 + excessN2;
+                h2oVolPercent = (theoH2O / totalVol) * 100;
+            } else if (state.fuelType === 'COAL') {
+                h2oVolPercent = 8.0;
+            } else if (state.fuelType === 'DIESEL') {
+                h2oVolPercent = 12.0;
+            } else {
+                h2oVolPercent = 10.0;
+            }
+            
+            // 使用实际排烟温度计算水分析出量
+            finalWaterCondensation = calculateWaterCondensation(
+                state.flueIn,
+                actualFlueOut,  // 使用实际排烟温度，而不是用户输入的目标温度
+                sourcePot.flowVol,
+                h2oVolPercent,
+                actualDewPoint
+            );
+        }
+    }
     
     // 🔧 修复：如果启用手动COP锁定，使用手动COP值计算驱动能耗
     const copForCalculation = (state.isManualCop && state.manualCop > 0) 
@@ -1159,7 +1221,13 @@ async function runPythonSchemeC(state) {
             sourceFlowMass: flueGasMassFlow,  // 热源质量流量 (kg/h)
             sourceComposition: flueGasComposition,  // 热源成分组成
             // 🔧 新增：热汇参数
-            sinkFlowMass: flow_kg_h  // 热汇质量流量 (kg/h)
+            sinkFlowMass: flow_kg_h,  // 热汇质量流量 (kg/h)
+            // 🔧 新增：水分析出数据（优先使用后端返回的数据，如果没有则使用实际排烟温度重新计算）
+            waterCondensation: finalWaterCondensation ? {
+                condensedWater: finalWaterCondensation.condensedWater,
+                initialWater: finalWaterCondensation.initialWater,
+                finalWater: finalWaterCondensation.finalWater
+            } : null
         },
         
         co2ReductionRate: co2Reduction,  // 🔧 修复：使用计算值

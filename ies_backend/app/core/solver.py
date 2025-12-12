@@ -1,5 +1,5 @@
 # app/core/solver.py
-from app.core.physics import estimate_enthalpy, calculate_adjusted_dew_point
+from app.core.physics import estimate_enthalpy, calculate_adjusted_dew_point, calculate_water_condensation
 from app.core.cycles import calculate_cop
 from app.core.constants import FUEL_DB
 
@@ -23,7 +23,7 @@ class SchemeCSolver:
         
         if t_out < actual_dew_point:
             max_latent_per_m3 = 160.0 if fuel_type == 'NATURAL_GAS' else 0.0
-            cond_factor = (actual_dew_point - t_out) / (actual_dew_point - 30.0)
+            cond_factor = (actual_dew_point - t_out) / (actual_dew_point - 5.0)
             cond_factor = max(0.0, min(1.0, cond_factor))
             total_latent_potential = flow_vol * max_latent_per_m3 / 3600.0 
             latent_kw = total_latent_potential * cond_factor
@@ -53,7 +53,7 @@ class SchemeCSolver:
         
         # 🔧 修复：记录最大可用热源能力（用于判断是否热源不足）
         max_source_potential = self.calculate_flue_heat_release(
-            t_source_in, 30.0, req.source_flow_vol, req.fuel_type  # 假设最低排烟 30°C
+            t_source_in, 5.0, req.source_flow_vol, req.fuel_type  # 假设最低排烟 5°C
         )
         
         for i in range(self.max_iter):
@@ -103,17 +103,17 @@ class SchemeCSolver:
             # 边界保护
             if current_t_source_out >= t_source_in: current_t_source_out = t_source_in - 0.1
             # 🔧 修复：严格按照用户输入的目标排烟温度，不允许自动降级
-            # 如果用户输入的目标温度低于物理下限（30°C），则使用30°C作为下限
-            min_flue_out = max(30.0, req.source_out_target)
+            # 如果用户输入的目标温度低于物理下限（5°C），则使用5°C作为下限
+            min_flue_out = max(5.0, req.source_out_target)
             if current_t_source_out < min_flue_out: current_t_source_out = min_flue_out
 
         # 🔧 修复：如果无法收敛，严格按照用户输入的目标排烟温度计算（不自动降级）
         print(f"⚠️ 迭代未收敛，严格按照用户指定的排烟温度 {req.source_out_target:.1f}°C 计算...")
         
-        # 使用用户输入的目标排烟温度（如果低于物理下限30°C，则使用30°C）
-        target_flue_out = max(30.0, req.source_out_target)
-        if req.source_out_target < 30.0:
-            print(f"⚠️ 用户输入的目标排烟温度 {req.source_out_target:.1f}°C 低于物理下限，使用 30.0°C")
+        # 使用用户输入的目标排烟温度（如果低于物理下限5°C，则使用5°C）
+        target_flue_out = max(5.0, req.source_out_target)
+        if req.source_out_target < 5.0:
+            print(f"⚠️ 用户输入的目标排烟温度 {req.source_out_target:.1f}°C 低于物理下限，使用 5.0°C")
         
         # 严格按照目标排烟温度计算
         final_t_source_out = target_flue_out
@@ -162,13 +162,50 @@ class SchemeCSolver:
             print(f"   计算过程: 实际负荷={max_load_kw:.1f} kW, 流量={req.sink_flow_kg_h:.0f} kg/h")
             print(f"   实际温差: {actual_deltaT:.2f}°C, 入口={req.sink_in_temp:.1f}°C, 出口={actual_sink_out:.1f}°C")
         
+        # 🔧 新增：计算水分析出量
+        water_condensation = None
+        if req.fuel_type != 'ELECTRICITY':
+            fuel_data = FUEL_DB.get(req.fuel_type, FUEL_DB['NATURAL_GAS'])
+            excess_air = getattr(req, 'excess_air', 1.2)  # 使用getattr更安全
+            actual_dew_point = calculate_adjusted_dew_point(fuel_data["dewPointRef"], excess_air)
+            
+            # 估算烟气中水蒸气体积百分比
+            h2o_vol_percent = 0.0
+            
+            if req.fuel_type == 'NATURAL_GAS':
+                # 天然气：CH4 + 2O2 -> CO2 + 2H2O
+                theo_co2 = 1.0
+                theo_h2o = 2.0
+                theo_n2 = 7.52
+                excess_o2 = (excess_air - 1.0) * 2.0
+                excess_n2 = (excess_air - 1.0) * 7.52
+                total_vol = theo_co2 + theo_h2o + theo_n2 + excess_o2 + excess_n2
+                h2o_vol_percent = (theo_h2o / total_vol) * 100
+            elif req.fuel_type == 'COAL':
+                h2o_vol_percent = 8.0
+            elif req.fuel_type == 'DIESEL':
+                h2o_vol_percent = 12.0
+            else:
+                h2o_vol_percent = 10.0  # 默认值
+            
+            # 计算水分析出量
+            water_condensation = calculate_water_condensation(
+                t_source_in,
+                final_t_source_out,
+                req.source_flow_vol,
+                h2o_vol_percent,
+                actual_dew_point
+            )
+        
         print(f"✅ 按用户指定的排烟温度 {final_t_source_out:.1f}°C 计算完成")
         print(f"   排烟温度: {final_t_source_out:.1f}°C (用户指定)")
         print(f"   实际负荷: {max_load_kw:.1f} kW")
         print(f"   实际出水: {actual_sink_out:.1f}°C")
         print(f"   COP: {cop:.2f}")
+        if water_condensation and water_condensation["condensed_water"] > 0:
+            print(f"   水分析出量: {water_condensation['condensed_water']:.2f} kg/h")
         
-        return {
+        result = {
             "status": "converged",
             "iterations": self.max_iter,
             "target_load_kw": round(max_load_kw, 1),  # 实际能达到的负荷
@@ -178,3 +215,9 @@ class SchemeCSolver:
             "actual_sink_out": round(actual_sink_out, 1),  # 实际出水温度
             "is_source_limited": max_load_kw < q_sink_target_kw * 0.95  # 如果实际负荷低于目标，标记为热源限制
         }
+        
+        # 🔧 新增：添加水分析出数据到返回结果
+        if water_condensation:
+            result["water_condensation"] = water_condensation
+        
+        return result
