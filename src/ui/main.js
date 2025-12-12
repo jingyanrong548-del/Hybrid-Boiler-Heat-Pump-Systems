@@ -327,7 +327,14 @@ function renderTechSpecDirectly(reqData) {
     let compositionStr = "N/A";
     if (reqData.sourceComposition) {
         const comp = reqData.sourceComposition;
-        compositionStr = `CO₂: ${comp.co2}%, H₂O: ${comp.h2o}%, N₂: ${comp.n2}%, O₂: ${comp.o2}%`;
+        // 根据成分类型构建显示字符串
+        const parts = [];
+        if (comp.h2o !== undefined && comp.h2o > 0) parts.push(`H₂O: ${comp.h2o.toFixed(1)}%`);
+        if (comp.co2 !== undefined && comp.co2 > 0) parts.push(`CO₂: ${comp.co2.toFixed(2)}%`);
+        if (comp.n2 !== undefined && comp.n2 > 0) parts.push(`N₂: ${comp.n2.toFixed(1)}%`);
+        if (comp.o2 !== undefined && comp.o2 > 0) parts.push(`O₂: ${comp.o2.toFixed(1)}%`);
+        if (comp.ar !== undefined && comp.ar > 0) parts.push(`Ar: ${comp.ar.toFixed(2)}%`);
+        compositionStr = parts.length > 0 ? parts.join(', ') : "N/A";
     }
     
     // 🔧 构建流量显示

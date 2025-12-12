@@ -439,6 +439,83 @@ export class System {
             ? `✅ 建议采用热泵 (预计年省 ${decision.gainWan.toFixed(1)} 万元)` 
             : `⚠️ 建议维持锅炉 (热泵方案预计年亏 ${Math.abs(decision.gainWan).toFixed(1)} 万元)`;
 
+        // 🔧 补充：计算热源流量和热汇流量
+        let sourceFlowVol = 0;      // 热源体积流量 (m³/h)
+        let sourceFlowMass = 0;     // 热源质量流量 (kg/h)
+        let sourceComposition = null; // 热源成分组成
+        let sinkFlowMass = 0;       // 热汇流量 (kg/h)
+        
+        if (s.topology === TOPOLOGY.PARALLEL) {
+            // 方案A：空气源热泵
+            // 计算空气流量：基于热泵制热量和空气温降
+            // Q = m × Cp × ΔT，其中 m = ρ × V
+            // 空气密度约 1.2 kg/m³（标准状态），比热容约 1.005 kJ/(kg·K)
+            const airDensity = 1.2; // kg/m³ (标准状态)
+            const airCp = 1.005;    // kJ/(kg·K)
+            const airDeltaT = tSourceIn - tSourceOut; // 空气温降
+            
+            if (airDeltaT > 0 && hpCapacity > 0) {
+                // 热泵制热量 = hpCapacity (kW)
+                // hpCapacity × 3600 = m × Cp × ΔT (kJ/h)
+                // m = (hpCapacity × 3600) / (Cp × ΔT) (kg/h)
+                sourceFlowMass = (hpCapacity * 3600) / (airCp * airDeltaT);
+                sourceFlowVol = sourceFlowMass / airDensity;
+                
+                // 空气成分组成（标准大气）
+                sourceComposition = {
+                    n2: 78.08,
+                    o2: 20.95,
+                    ar: 0.93,
+                    co2: 0.04,
+                    h2o: 0.0  // 干燥空气
+                };
+            }
+        } else {
+            // 方案B：余热水源热泵
+            // 计算余热水流量：基于热泵制热量和水温降
+            const waterDensity = 1000; // kg/m³
+            const waterCp = 4.187;     // kJ/(kg·K)
+            const waterDeltaT = tSourceIn - tSourceOut; // 水温降
+            
+            if (waterDeltaT > 0 && hpCapacity > 0) {
+                // 热泵制热量 = hpCapacity (kW)
+                // hpCapacity × 3600 = m × Cp × ΔT (kJ/h)
+                // m = (hpCapacity × 3600) / (Cp × ΔT) (kg/h)
+                sourceFlowMass = (hpCapacity * 3600) / (waterCp * waterDeltaT);
+                sourceFlowVol = sourceFlowMass / waterDensity;
+                
+                // 余热水成分：主要是水
+                sourceComposition = {
+                    h2o: 100.0,
+                    co2: 0.0,
+                    n2: 0.0,
+                    o2: 0.0
+                };
+            }
+        }
+        
+        // 计算热汇流量（水流量）
+        if (s.mode === MODES.STEAM && s.loadUnit === 'TON' && s.loadValueTons > 0) {
+            // 蒸汽系统：直接使用用户输入的蒸吨数作为补水流量
+            sinkFlowMass = s.loadValueTons * 1000;  // 1 蒸吨 = 1000 kg/h
+        } else if (s.mode === MODES.STEAM && s.loadUnit === 'KW') {
+            // 蒸汽系统但使用KW单位：使用焓值计算
+            const h_target = estimateEnthalpy(targetT, true);  // 蒸汽焓值
+            const h_in = estimateEnthalpy(s.loadInStd, false); // 液态水焓值
+            const deltaH = h_target - h_in; // kJ/kg
+            if (deltaH > 0 && s.loadValue > 0) {
+                // Q = m × ΔH，所以 m = Q / ΔH
+                sinkFlowMass = (s.loadValue * 3600) / deltaH; // kg/h
+            }
+        } else {
+            // 热水系统：使用热负荷和目标温差计算流量
+            const loadDeltaT = targetT - s.loadInStd;
+            if (loadDeltaT > 0 && s.loadValue > 0) {
+                const waterCp = 4.187; // kJ/(kg·K)
+                sinkFlowMass = (s.loadValue * 3600) / (waterCp * loadDeltaT);
+            }
+        }
+        
         const reqData = {
             sourceType: sourceType,
             sourceIn: tSourceIn,
@@ -446,7 +523,13 @@ export class System {
             loadType: s.mode === MODES.STEAM ? "蒸汽 (Steam)" : "热水 (Hot Water)",
             loadIn: s.loadInStd, 
             loadOut: targetT,
-            capacity: hpCapacity
+            capacity: hpCapacity,
+            // 🔧 补充：热源参数
+            sourceFlowVol: sourceFlowVol,      // 热源体积流量 (m³/h)
+            sourceFlowMass: sourceFlowMass,    // 热源质量流量 (kg/h)
+            sourceComposition: sourceComposition, // 热源成分组成
+            // 🔧 补充：热汇参数
+            sinkFlowMass: sinkFlowMass         // 热汇流量 (kg/h)
         };
 
         return {
