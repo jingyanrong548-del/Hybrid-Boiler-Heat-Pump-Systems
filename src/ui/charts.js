@@ -90,7 +90,22 @@ export function updatePerformanceChart(state, actualResult = null) {
                 labels.push(tOut);
                 dataCOP.push(manualCop);  // 所有点都使用手动COP值
             }
+        } else if (recoveryType === RECOVERY_TYPES.ABS) {
+            // 🔧 修复：吸收式热泵显示固定COP水平线
+            // 根据模式计算固定COP值（与cycles.js逻辑一致）
+            let fixedCop;
+            if (mode === MODES.STEAM && steamStrategy === STRATEGIES.GEN) {
+                fixedCop = 1.45;  // 直接产蒸汽模式
+            } else {
+                fixedCop = 1.70;  // 热水模式或补水预热模式
+            }
+            
+            for (let tOut = 30; tOut <= 80; tOut += 5) {
+                labels.push(tOut);
+                dataCOP.push(fixedCop);  // 所有点都使用固定COP值，形成水平线
+            }
         } else {
+            // 电动热泵：基于温度计算COP曲线
             for (let tOut = 30; tOut <= 80; tOut += 5) {
                 labels.push(tOut);
                 

@@ -2,7 +2,7 @@
 # 移植自 src/core/cycles.js
 
 def calculate_cop(evap_temp: float, cond_temp: float, efficiency: float, 
-                  mode: str, strategy: str) -> dict:
+                  mode: str, strategy: str, recovery_type: str = "MVR") -> dict:
     """
     统一 COP 计算引擎
     """
@@ -15,6 +15,17 @@ def calculate_cop(evap_temp: float, cond_temp: float, efficiency: float,
     if lift <= 10.0: 
         return {"cop": 8.0, "lift": lift, "error": "温差过小"}
 
+    # === 分支 A: 吸收式热泵 (Absorption) ===
+    if recovery_type == "ABSORPTION_HP":
+        # 如果是蒸汽模式，但策略是补水预热，本质上还是加热水，COP 应较高 (1.7)
+        # 只有在直接产生蒸汽 (GEN) 时，COP 才会降低到 1.45
+        if mode == "STEAM" and strategy == "STRATEGY_GEN":
+            return {"cop": 1.45, "lift": lift, "error": None}
+        else:
+            # 热水模式 或 蒸汽补水预热模式
+            return {"cop": 1.70, "lift": lift, "error": None}
+
+    # === 分支 B: 电动热泵 (MVR/Compressor) ===
     # 3. 卡诺循环基准 (Carnot)
     t_evap_k = evap_temp + 273.15
     t_cond_k = cond_temp + 273.15

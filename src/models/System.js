@@ -191,13 +191,45 @@ export class System {
         const totalInvest = hpRes.recoveredHeat * s.capexHP;
         const payback = (annualSaving > 0) ? (totalInvest / annualSaving) : 99;
         
-        const baselineCo2PerHour = baseline.co2PerHour; 
+        // 🔧 修复：计算 CO2 减排率（改为直接计算方式，逻辑更清晰）
+        // 基准系统（纯粹锅炉）：提供总负荷的CO2排放
+        const baselineCo2PerHour = baseline.co2PerHour;
         
-        // 计算替代掉的 CO2 也要用同样的严谨逻辑
-        const hpReplacedCo2 = savedFuelUnits * boiler.fuelData.co2Factor;
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/8d595749-f587-4ed5-9402-4cdd0306ec71',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'System.js:196',message:'CO2计算开始(JS)',data:{baselineCo2PerHour,loadValue:s.loadValue,recoveredHeat:hpRes.recoveredHeat},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+        // #endregion
         
-        const currentCo2 = (baselineCo2PerHour - hpReplacedCo2) + driveCo2;
+        // 耦合系统（锅炉+热泵）：直接计算实际CO2排放
+        // 1. 计算锅炉实际需要提供的负荷
+        const boilerLoadKW = s.loadValue - hpRes.recoveredHeat;  // 锅炉实际负荷
+        
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/8d595749-f587-4ed5-9402-4cdd0306ec71',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'System.js:202',message:'锅炉负荷计算(JS)',data:{boilerLoadKW,loadValue:s.loadValue,recoveredHeat:hpRes.recoveredHeat,boilerEff:s.boilerEff},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+        // #endregion
+        
+        // 2. 计算锅炉实际CO2排放
+        const boilerInputKW = boilerLoadKW / s.boilerEff;
+        const boilerInputMJ = boilerInputKW * 3.6;
+        const boilerFuelUnits = boilerInputMJ / boiler.getCalorificValue();
+        const boilerCo2 = boilerFuelUnits * boiler.fuelData.co2Factor;  // 锅炉CO2 (kg/h)
+        
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/8d595749-f587-4ed5-9402-4cdd0306ec71',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'System.js:208',message:'锅炉CO2计算(JS)',data:{boilerInputKW,boilerInputMJ,boilerFuelUnits,boilerCo2,calorificValue:boiler.getCalorificValue(),co2Factor:boiler.fuelData.co2Factor},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+        // #endregion
+        
+        // 3. 耦合系统总CO2 = 锅炉CO2 + 热泵驱动CO2
+        const currentCo2 = boilerCo2 + driveCo2;
+        
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/8d595749-f587-4ed5-9402-4cdd0306ec71',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'System.js:212',message:'耦合系统CO2计算(JS)',data:{boilerCo2,driveCo2,currentCo2},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
+        // #endregion
+        
+        // 4. 计算减排率 = (基准CO2 - 耦合CO2) / 基准CO2 * 100
         const co2Reduction = ((baselineCo2PerHour - currentCo2) / baselineCo2PerHour) * 100;
+        
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/8d595749-f587-4ed5-9402-4cdd0306ec71',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'System.js:216',message:'减排率计算(JS)',data:{baselineCo2PerHour,currentCo2,co2Reduction,formula:`(${baselineCo2PerHour}-${currentCo2})/${baselineCo2PerHour}*100`},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
+        // #endregion
         
         const per = (drivePrimary > 0) ? (hpRes.recoveredHeat / drivePrimary) : 0;
 

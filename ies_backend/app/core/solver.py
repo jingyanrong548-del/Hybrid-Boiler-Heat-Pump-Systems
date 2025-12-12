@@ -62,7 +62,8 @@ class SchemeCSolver:
             else:
                 t_evap = current_t_source_out - 5.0
                 t_cond = effective_sink_target + 5.0
-                cycle_res = calculate_cop(t_evap, t_cond, req.efficiency, req.mode, "STRATEGY_GEN")
+                # 🔧 修复：使用请求中的策略参数
+                cycle_res = calculate_cop(t_evap, t_cond, req.efficiency, req.mode, req.strategy, req.recovery_type)
                 cop = cycle_res["cop"]
 
             # B. 需求
@@ -122,7 +123,8 @@ class SchemeCSolver:
         else:
             t_evap = final_t_source_out - 5.0
             t_cond = effective_sink_target + 5.0
-            cycle_res = calculate_cop(t_evap, t_cond, req.efficiency, req.mode, "STRATEGY_GEN")
+            # 🔧 修复：使用请求中的策略参数
+            cycle_res = calculate_cop(t_evap, t_cond, req.efficiency, req.mode, req.strategy, req.recovery_type)
             cop = cycle_res["cop"]
         
         # 计算在该排烟温度下热源能支撑的最大负荷

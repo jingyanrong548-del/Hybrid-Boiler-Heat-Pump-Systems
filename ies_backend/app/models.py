@@ -20,7 +20,9 @@ class SchemeCRequest(BaseModel):
     
     efficiency: float = 0.55 # 完善度
     mode: str = "WATER"      # WATER 或 STEAM
+    strategy: str = "STRATEGY_PRE"  # 🔧 新增：蒸汽策略 STRATEGY_PRE 或 STRATEGY_GEN
     fuel_type: str = "NATURAL_GAS" # 燃料类型(影响比热容)
+    recovery_type: str = "MVR"  # 🔧 新增：热泵类型 MVR 或 ABSORPTION_HP
     
     # 🔧 新增：手动COP锁定支持
     is_manual_cop: bool = False  # 是否启用手动COP锁定

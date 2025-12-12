@@ -522,6 +522,33 @@ store.subscribe((state) => {
     if (ui.selFuel && ui.selFuel.value !== fuelType) ui.selFuel.value = fuelType;
     if (document.activeElement !== ui.inpElecPrice) ui.inpElecPrice.value = elecPrice;
     
+    // 🔧 修复：方案C + 吸收式热泵时，电价不参与计算，禁用并变灰电价输入框
+    const isAbsorptionInRecovery = (topology === TOPOLOGY.RECOVERY && recoveryType === RECOVERY_TYPES.ABS);
+    if (ui.inpElecPrice) {
+        // 查找电价标签（label是input的父div的兄弟元素）
+        const inputContainer = ui.inpElecPrice.closest('.relative');
+        const elecPriceLabel = inputContainer?.parentElement?.querySelector('label');
+        
+        if (isAbsorptionInRecovery) {
+            ui.inpElecPrice.disabled = true;
+            ui.inpElecPrice.classList.add('bg-slate-100', 'text-slate-400', 'cursor-not-allowed');
+            // 标签也变灰
+            if (elecPriceLabel) {
+                elecPriceLabel.classList.add('text-slate-400', 'opacity-60');
+            }
+            // 添加提示
+            ui.inpElecPrice.title = '吸收式热泵模式下，驱动使用燃料而非电力，电价不参与计算';
+        } else {
+            ui.inpElecPrice.disabled = false;
+            ui.inpElecPrice.classList.remove('bg-slate-100', 'text-slate-400', 'cursor-not-allowed');
+            // 恢复标签颜色
+            if (elecPriceLabel) {
+                elecPriceLabel.classList.remove('text-slate-400', 'opacity-60');
+            }
+            ui.inpElecPrice.title = '';
+        }
+    }
+    
     updatePriceInterlock(fuelType);
     if (document.activeElement !== ui.inpFuelPrice) {
         ui.inpFuelPrice.value = fuelPrice;
@@ -642,6 +669,36 @@ store.subscribe((state) => {
 });
 
 // === 5. 仿真运行逻辑 ===
+
+// 辅助函数：生成决策信息（与System.js中的逻辑一致）
+function makeDecision(annualSaving, payback) {
+    const saveWan = annualSaving / 10000;
+    let d = {
+        winner: 'BASE',
+        level: 'NEGATIVE',
+        title: "🛑 不推荐 (Not Recommended)",
+        desc: `当前工况下，热泵运行成本将高出 ${Math.abs(saveWan).toFixed(1)} 万元/年`,
+        gainWan: saveWan,
+        class: "bg-orange-50 border-orange-200 text-orange-800"
+    };
+
+    if (annualSaving > 0) {
+        d.winner = 'HP';
+        d.gainWan = saveWan;
+        if (payback < 4.0) {
+            d.level = 'STRONG';
+            d.title = "🏆 强力推荐 (Highly Recommended)";
+            d.desc = `相比对比燃料，每年产生纯收益 ${saveWan.toFixed(1)} 万元，预计 ${payback.toFixed(1)} 年回本。`; 
+            d.class = "bg-emerald-50 border-emerald-200 text-emerald-800";
+        } else {
+            d.level = 'MARGINAL';
+            d.title = "⚖️ 建议考虑 (Consider)";
+            d.desc = `虽然每年节省 ${saveWan.toFixed(1)} 万元，但投资回收期较长 (${payback.toFixed(1)} 年)。`;
+            d.class = "bg-blue-50 border-blue-200 text-blue-800";
+        }
+    }
+    return d;
+}
 
 // 5.1 Python 呼叫专用函数
 // src/ui/main.js
@@ -770,7 +827,9 @@ async function runPythonSchemeC(state) {
         source_flow_vol: sourcePot.flowVol, 
         efficiency: state.perfectionDegree,
         mode: state.mode,
+        strategy: state.steamStrategy || STRATEGIES.PREHEAT,  // 🔧 新增：传递策略（吸收式热泵需要）
         fuel_type: state.fuelType,
+        recovery_type: state.recoveryType,  // 🔧 新增：传递热泵类型
         // 🔧 新增：传递手动COP锁定参数
         is_manual_cop: state.isManualCop,
         manual_cop: state.manualCop
@@ -833,24 +892,60 @@ async function runPythonSchemeC(state) {
     const savedFuelUnit = savedFuelMJ / normalizedCalValue;  // 转换为燃料单位 (m3 或 kg)
     const savedCost = savedFuelUnit * state.fuelPrice;
     
-    const driveCost = driveEnergy * state.elecPrice; 
+    // 🔧 修复：根据热泵类型计算驱动成本
+    let driveCost = 0;
+    if (state.recoveryType === RECOVERY_TYPES.MVR) {
+        // 电动热泵：驱动是电力
+        driveCost = driveEnergy * state.elecPrice;
+    } else {
+        // 吸收式热泵：驱动是热（燃料）
+        const driveInputFuelKW = driveEnergy / state.boilerEff;
+        const driveInputMJ = driveInputFuelKW * 3.6;
+        const driveFuelUnits = driveInputMJ / normalizedCalValue;
+        driveCost = driveFuelUnits * state.fuelPrice;
+    }
     
     const hourlySaving = savedCost - driveCost;
     const annualSaving = hourlySaving * state.annualHours;
-    const payback = (recoveredHeat * state.capexHP) / annualSaving;
+    // 🔧 修复：回收期计算，当年节省额 <= 0 时显示特殊值
+    const payback = (annualSaving > 0) ? ((recoveredHeat * state.capexHP) / annualSaving) : 99;
 
-    // 🔧 修复：计算 CO2 减排率
+    // 🔧 修复：计算 CO2 减排率（改为直接计算方式，逻辑更清晰）
+    // 基准系统（纯粹锅炉）：提供总负荷的CO2排放
     const baselineCo2PerHour = baseline.co2PerHour;
     
-    // 计算热泵替代掉的CO2（节省的燃料产生的CO2）
-    const hpReplacedCo2 = savedFuelUnit * boiler.fuelData.co2Factor;  // 替代掉的CO2 (kg/h)
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/8d595749-f587-4ed5-9402-4cdd0306ec71',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'main.js:843',message:'CO2计算开始',data:{baselineCo2PerHour,loadValue:state.loadValue,recoveredHeat},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+    // #endregion
     
-    // 计算热泵驱动能耗产生的CO2
+    // 耦合系统（锅炉+热泵）：直接计算实际CO2排放
+    // 1. 计算锅炉实际需要提供的负荷
+    const boilerLoadKW = state.loadValue - recoveredHeat;  // 锅炉实际负荷
+    
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/8d595749-f587-4ed5-9402-4cdd0306ec71',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'main.js:850',message:'锅炉负荷计算',data:{boilerLoadKW,loadValue:state.loadValue,recoveredHeat,boilerEff:state.boilerEff},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+    // #endregion
+    
+    // 2. 计算锅炉实际CO2排放
+    const boilerInputKW = boilerLoadKW / state.boilerEff;
+    const boilerInputMJ = boilerInputKW * 3.6;
+    const boilerFuelUnits = boilerInputMJ / normalizedCalValue;
+    const boilerCo2 = boilerFuelUnits * boiler.fuelData.co2Factor;  // 锅炉CO2 (kg/h)
+    
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/8d595749-f587-4ed5-9402-4cdd0306ec71',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'main.js:857',message:'锅炉CO2计算',data:{boilerInputKW,boilerInputMJ,boilerFuelUnits,boilerCo2,normalizedCalValue,co2Factor:boiler.fuelData.co2Factor},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+    // #endregion
+    
+    // 3. 计算热泵驱动能耗产生的CO2
     let driveCo2 = 0, drivePrimary = 0;
     if (state.recoveryType === RECOVERY_TYPES.MVR) {
         // 电动热泵：驱动是电力
         driveCo2 = driveEnergy * FUEL_DB['ELECTRICITY'].co2Factor;  // kg/h
         drivePrimary = driveEnergy * (state.pefElec || 2.5);
+        
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/8d595749-f587-4ed5-9402-4cdd0306ec71',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'main.js:863',message:'电动热泵驱动CO2',data:{driveEnergy,driveCo2,elecCo2Factor:FUEL_DB['ELECTRICITY'].co2Factor,recoveryType:'MVR'},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
+        // #endregion
     } else {
         // 吸收式热泵：驱动是热（燃料）
         const driveInputFuelKW = driveEnergy / state.boilerEff;
@@ -858,26 +953,36 @@ async function runPythonSchemeC(state) {
         const driveFuelUnits = driveInputMJ / normalizedCalValue;
         driveCo2 = driveFuelUnits * boiler.fuelData.co2Factor;  // kg/h
         drivePrimary = driveInputFuelKW * 1.05;
+        
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/8d595749-f587-4ed5-9402-4cdd0306ec71',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'main.js:870',message:'吸收式热泵驱动CO2',data:{driveEnergy,driveInputFuelKW,driveInputMJ,driveFuelUnits,driveCo2,normalizedCalValue,co2Factor:boiler.fuelData.co2Factor,recoveryType:'ABSORPTION'},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
+        // #endregion
     }
     
-    // 计算当前系统的CO2排放
-    // 当前系统 = 基准系统 - 热泵替代的CO2 + 热泵驱动的CO2
-    const currentCo2 = (baselineCo2PerHour - hpReplacedCo2) + driveCo2;
+    // 4. 耦合系统总CO2 = 锅炉CO2 + 热泵驱动CO2
+    const currentCo2 = boilerCo2 + driveCo2;
     
-    // 计算减排率
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/8d595749-f587-4ed5-9402-4cdd0306ec71',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'main.js:876',message:'耦合系统CO2计算',data:{boilerCo2,driveCo2,currentCo2},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
+    // #endregion
+    
+    // 5. 计算减排率 = (基准CO2 - 耦合CO2) / 基准CO2 * 100
     const co2Reduction = ((baselineCo2PerHour - currentCo2) / baselineCo2PerHour) * 100;
+    
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/8d595749-f587-4ed5-9402-4cdd0306ec71',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'main.js:880',message:'减排率计算',data:{baselineCo2PerHour,currentCo2,co2Reduction,formula:`(${baselineCo2PerHour}-${currentCo2})/${baselineCo2PerHour}*100`},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
+    // #endregion
     
     // 🔧 调试日志：输出CO2计算详情
     console.log("📊 CO2计算详情:", {
         "基准负荷(kW)": state.loadValue.toFixed(2),
         "基准CO2(kg/h)": baselineCo2PerHour.toFixed(2),
         "热泵回收热量(kW)": recoveredHeat.toFixed(2),
-        "节省燃料输入(kW)": savedFuelInputKW.toFixed(2),
-        "节省燃料单位": savedFuelUnit.toFixed(4) + " " + boiler.fuelData.unit,
-        "替代CO2(kg/h)": hpReplacedCo2.toFixed(2),
+        "锅炉实际负荷(kW)": boilerLoadKW.toFixed(2),
+        "锅炉CO2(kg/h)": boilerCo2.toFixed(2),
         "驱动能耗(kW)": driveEnergy.toFixed(2),
         "驱动CO2(kg/h)": driveCo2.toFixed(2),
-        "当前系统CO2(kg/h)": currentCo2.toFixed(2),
+        "耦合系统CO2(kg/h)": currentCo2.toFixed(2),
         "减排率(%)": co2Reduction.toFixed(2),
         "计算公式": `(${baselineCo2PerHour.toFixed(2)} - ${currentCo2.toFixed(2)}) / ${baselineCo2PerHour.toFixed(2)} * 100`
     });
@@ -967,7 +1072,7 @@ async function runPythonSchemeC(state) {
         per: per,  // 🔧 修复：使用计算值
         couplingData: couplingData,  // 🔧 修复：使用计算值
         tonData: tonData,  // 🔧 修复：添加 tonData
-        decision: { winner: annualSaving>0?'HP':'BASE', level: 'STRONG', title: 'Python Analysis', desc: '基于后端 AI 求解器结果' }
+        decision: makeDecision(annualSaving, payback)  // 🔧 修复：使用正确的决策逻辑
     };
     
     handleSimulationResult(res, state);
@@ -1099,7 +1204,16 @@ function handleSimulationResult(res, state) {
         
         if (res.decision) renderDecisionBanner(res.decision);
         
-        if (ui.resPayback) ui.resPayback.innerText = (res.payback > 20) ? ">20" : res.payback.toFixed(1);
+        // 🔧 修复：回收期显示逻辑，处理负值和超大值
+        if (ui.resPayback) {
+            if (res.payback >= 99 || res.payback < 0) {
+                ui.resPayback.innerText = "N/A";
+            } else if (res.payback > 20) {
+                ui.resPayback.innerText = ">20";
+            } else {
+                ui.resPayback.innerText = res.payback.toFixed(1);
+            }
+        }
         if (ui.resCo2Red) ui.resCo2Red.innerText = res.co2ReductionRate.toFixed(1);
     }
 
