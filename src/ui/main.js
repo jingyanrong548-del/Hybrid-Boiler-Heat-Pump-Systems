@@ -6,8 +6,9 @@ import { Boiler } from '../models/Boiler.js'; // 用于计算烟气量
 import { fetchSchemeC } from '../core/api.js'; // 用于呼叫 Python
 import { updatePerformanceChart } from './charts.js';
 import { renderSystemDiagram } from './diagram.js'; 
-import { MODES, TOPOLOGY, STRATEGIES, FUEL_DB } from '../core/constants.js';
+import { MODES, TOPOLOGY, STRATEGIES, FUEL_DB, RECOVERY_TYPES } from '../core/constants.js';
 import { getSatTempFromPressure, convertSteamTonsToKW } from '../core/physics.js';
+import { calculateCOP } from '../core/cycles.js';
 
 // === Unit Options ===
 const CAL_UNIT_OPTIONS = [
@@ -278,6 +279,18 @@ function renderTechSpecDirectly(reqData) {
     panel.id = 'debug-tech-panel';
     panel.className = "mt-4 mx-4 mb-4 p-3 bg-slate-100 rounded-lg border border-slate-200 text-xs font-mono shadow-inner";
     
+    // 🔧 构建热源成分显示字符串
+    let compositionStr = "N/A";
+    if (reqData.sourceComposition) {
+        const comp = reqData.sourceComposition;
+        compositionStr = `CO₂: ${comp.co2}%, H₂O: ${comp.h2o}%, N₂: ${comp.n2}%, O₂: ${comp.o2}%`;
+    }
+    
+    // 🔧 构建流量显示
+    const sourceFlowVolStr = reqData.sourceFlowVol ? `${reqData.sourceFlowVol.toFixed(1)} m³/h` : "N/A";
+    const sourceFlowMassStr = reqData.sourceFlowMass ? `${reqData.sourceFlowMass.toFixed(1)} kg/h` : "N/A";
+    const sinkFlowMassStr = reqData.sinkFlowMass ? `${reqData.sinkFlowMass.toFixed(1)} kg/h` : "N/A";
+    
     panel.innerHTML = `
         <div class="flex items-center justify-between mb-2 border-b border-slate-300 pb-1">
             <span class="font-bold text-slate-600">🛠️ 厂家选型单参数 (DEBUG)</span>
@@ -304,9 +317,29 @@ function renderTechSpecDirectly(reqData) {
                 </div>
             </div>
 
-            <div class="col-span-2 border-t border-slate-300 pt-1 mt-1 flex justify-between items-center">
-                <span class="text-slate-500">制热量 (Capacity):</span>
-                <span class="text-sm font-bold text-indigo-600">${reqData.capacity.toLocaleString(undefined, {maximumFractionDigits: 0})} kW</span>
+            <div class="col-span-2 border-t border-slate-300 pt-1 mt-1">
+                <div class="text-slate-500 mb-1">制热量 (Capacity):</div>
+                <div class="text-sm font-bold text-indigo-600">${reqData.capacity.toLocaleString(undefined, {maximumFractionDigits: 0})} kW</div>
+            </div>
+            
+            <div class="col-span-2 border-t border-slate-300 pt-2 mt-1">
+                <div class="text-[10px] text-slate-400 mb-1">热源成分组成 (Source Composition)</div>
+                <div class="text-xs text-slate-700 font-mono">${compositionStr}</div>
+            </div>
+            
+            <div class="col-span-2 sm:col-span-1 border-t border-slate-300 pt-2 mt-1">
+                <div class="text-[10px] text-slate-400 mb-1">热源体积流量 (Source Vol. Flow)</div>
+                <div class="text-xs font-bold text-slate-700">${sourceFlowVolStr}</div>
+            </div>
+            
+            <div class="col-span-2 sm:col-span-1 border-t border-slate-300 pt-2 mt-1">
+                <div class="text-[10px] text-slate-400 mb-1">热源质量流量 (Source Mass Flow)</div>
+                <div class="text-xs font-bold text-slate-700">${sourceFlowMassStr}</div>
+            </div>
+            
+            <div class="col-span-2 border-t border-slate-300 pt-2 mt-1">
+                <div class="text-[10px] text-slate-400 mb-1">热汇流量 (Sink Flow)</div>
+                <div class="text-xs font-bold text-slate-700">${sinkFlowMassStr}</div>
             </div>
         </div>
     `;
@@ -470,6 +503,9 @@ store.subscribe((state) => {
     if (document.activeElement !== ui.inpLoadInStd) ui.inpLoadInStd.value = loadInStd;
     if (document.activeElement !== ui.inpSource) ui.inpSource.value = sourceTemp;
     if (document.activeElement !== ui.inpSourceOut) ui.inpSourceOut.value = sourceOut;
+    // 🔧 修复：添加 flueIn 和 flueOut 的同步更新
+    if (document.activeElement !== ui.inpFlueIn) ui.inpFlueIn.value = state.flueIn;
+    if (document.activeElement !== ui.inpFlueOut) ui.inpFlueOut.value = state.flueOut;
     if (document.activeElement !== ui.inpLoadIn) ui.inpLoadIn.value = state.loadIn;
     if (document.activeElement !== ui.inpLoadOut) ui.inpLoadOut.value = state.loadOut;
 
@@ -607,10 +643,89 @@ async function runPythonSchemeC(state) {
     });
     const sourcePot = boiler.calculateSourcePotential();
     
+    // 2.1 计算烟气成分组成和质量流量
+    let flueGasComposition = null;
+    let flueGasMassFlow = 0;
+    
+    if (state.fuelType !== 'ELECTRICITY' && sourcePot.flowVol > 0) {
+        // 计算烟气成分（体积百分比）
+        const alpha = state.excessAir || 1.2;
+        const fuelData = FUEL_DB[state.fuelType];
+        
+        if (fuelData) {
+            // 简化模型：基于燃料类型和过量空气系数估算成分
+            // 天然气典型成分（干基，alpha=1.2时）：
+            // CO2: ~8-10%, H2O: ~18-20%, N2: ~70-72%, O2: ~2-4%
+            let co2VolPercent, h2oVolPercent, n2VolPercent, o2VolPercent;
+            
+            if (state.fuelType === 'NATURAL_GAS') {
+                // 天然气：CH4 + 2O2 -> CO2 + 2H2O
+                // 理论：1 m3 CH4 -> 1 m3 CO2 + 2 m3 H2O + 7.52 m3 N2
+                // 实际（alpha=1.2）：增加20%空气，O2增加
+                const theoCO2 = 1.0;  // 相对值
+                const theoH2O = 2.0;
+                const theoN2 = 7.52;
+                const excessO2 = (alpha - 1.0) * 2.0;  // 过量O2
+                const excessN2 = (alpha - 1.0) * 7.52;  // 过量N2
+                
+                const totalVol = theoCO2 + theoH2O + theoN2 + excessO2 + excessN2;
+                co2VolPercent = (theoCO2 / totalVol) * 100;
+                h2oVolPercent = (theoH2O / totalVol) * 100;
+                n2VolPercent = ((theoN2 + excessN2) / totalVol) * 100;
+                o2VolPercent = (excessO2 / totalVol) * 100;
+            } else if (state.fuelType === 'COAL') {
+                // 煤：简化模型，典型值
+                co2VolPercent = 12.0;
+                h2oVolPercent = 8.0;
+                n2VolPercent = 76.0;
+                o2VolPercent = 4.0;
+            } else if (state.fuelType === 'DIESEL') {
+                // 柴油：简化模型
+                co2VolPercent = 10.0;
+                h2oVolPercent = 12.0;
+                n2VolPercent = 74.0;
+                o2VolPercent = 4.0;
+            } else {
+                // 其他燃料：默认值
+                co2VolPercent = 10.0;
+                h2oVolPercent = 10.0;
+                n2VolPercent = 76.0;
+                o2VolPercent = 4.0;
+            }
+            
+            flueGasComposition = {
+                co2: co2VolPercent.toFixed(1),
+                h2o: h2oVolPercent.toFixed(1),
+                n2: n2VolPercent.toFixed(1),
+                o2: o2VolPercent.toFixed(1)
+            };
+            
+            // 计算烟气质量流量（kg/h）
+            // 烟气密度：标准状态下约1.2-1.3 kg/m3，考虑温度修正
+            // 简化：使用平均密度 1.25 kg/m3（在100-200°C范围内）
+            const avgFlueTemp = (state.flueIn + state.flueOut) / 2;  // 使用目标排烟温度
+            const densityAtSTP = 1.293;  // 标准状态空气密度 kg/m3
+            const tempCorrection = 273.15 / (avgFlueTemp + 273.15);  // 温度修正
+            const flueGasDensity = densityAtSTP * tempCorrection * 1.05;  // 考虑CO2等重气体，约1.05倍
+            flueGasMassFlow = sourcePot.flowVol * flueGasDensity;
+        }
+    }
+    
     // 3. 准备数据: 计算水流量
-    const deltaT_Water = state.loadOut - state.loadIn; 
-    if (deltaT_Water <= 0) throw new Error("水温差必须大于 0");
-    const flow_kg_h = (state.loadValue * 3600) / (4.187 * deltaT_Water);
+    // 🔧 修复：对于蒸汽系统，如果用户输入的是蒸吨（TON），应该直接使用蒸吨数作为补水流量
+    // 对于热水系统或KW单位，才使用热负荷和目标温差计算流量
+    let flow_kg_h;
+    if (state.mode === MODES.STEAM && state.loadUnit === 'TON' && state.loadValueTons > 0) {
+        // 蒸汽系统：直接使用用户输入的蒸吨数作为补水流量（kg/h）
+        flow_kg_h = state.loadValueTons * 1000;  // 1 蒸吨 = 1000 kg/h
+        log(`📊 蒸汽系统：使用用户输入的补水流量 ${state.loadValueTons} t/h = ${flow_kg_h.toFixed(0)} kg/h`);
+    } else {
+        // 热水系统或KW单位：使用热负荷和目标温差计算流量
+        const deltaT_Water = state.loadOut - state.loadIn; 
+        if (deltaT_Water <= 0) throw new Error("水温差必须大于 0");
+        flow_kg_h = (state.loadValue * 3600) / (4.187 * deltaT_Water);
+        log(`📊 热水系统：基于热负荷和目标温差计算流量 ${flow_kg_h.toFixed(0)} kg/h`);
+    }
 
     // 4. 组装 Payload
     const payload = {
@@ -618,6 +733,7 @@ async function runPythonSchemeC(state) {
         sink_out_target: state.loadOut, 
         sink_flow_kg_h: flow_kg_h,      
         source_in_temp: state.flueIn,
+        source_out_target: state.flueOut,  // 🔧 修复：传递用户输入的目标排烟温度
         source_flow_vol: sourcePot.flowVol, 
         efficiency: state.perfectionDegree,
         mode: state.mode,
@@ -628,15 +744,28 @@ async function runPythonSchemeC(state) {
 
     // 5. 调用 API
     const pyRes = await fetchSchemeC(payload);
+    console.log("📥 Python 后端响应:", pyRes);
 
     // 6. 检查收敛状态
     if (pyRes.status !== 'converged') {
+        console.warn("⚠️ 后端计算未收敛:", pyRes.reason || "未知原因");
         throw new Error(pyRes.reason || "计算未收敛 (热源不足以支撑该负荷)");
     }
 
     // 7. 结果适配
+    // 🔧 修复：如果热源不足，使用实际能达到的负荷和出水温度
     const recoveredHeat = pyRes.target_load_kw;
+    const actualLoadOut = pyRes.actual_sink_out || state.loadOut;  // 如果热源不足，使用实际出水温度
     const driveEnergy = recoveredHeat / pyRes.final_cop;
+    
+    // 如果热源不足，记录日志
+    if (pyRes.is_source_limited) {
+        const actualFlueOut = pyRes.required_source_out;
+        const targetFlueOut = state.flueOut;
+        log(`⚠️ 热源不足警告：按用户指定的排烟温度 ${targetFlueOut.toFixed(1)}°C 计算，实际负荷 ${recoveredHeat.toFixed(1)} kW 低于目标负荷`, 'warning');
+        log(`   实际排烟温度: ${actualFlueOut.toFixed(1)}°C (用户指定: ${targetFlueOut.toFixed(1)}°C)`, 'warning');
+        log(`   实际出水温度: ${actualLoadOut.toFixed(1)}°C (目标: ${state.loadOut.toFixed(1)}°C)`, 'warning');
+    }
     
     const baseline = boiler.calculateBaseline(state.fuelPrice);
     // 经济计算用修正后的 MJ 值计算能量，再除以“归一化前”的单位值来算钱？
@@ -645,9 +774,14 @@ async function runPythonSchemeC(state) {
     // X MJ / 3.6 = Y kWh.
     // Y kWh / 10 (用户输入的10) = Z m3.
     // Z m3 * 3.8 = 钱。
-    // 简化公式：Saved_Units = Saved_MJ / normalizedCalValue (因为 normalized 已经是 MJ/unit 了)
-    const savedFuelMJ = (recoveredHeat / state.boilerEff) * 3.6;
-    const savedFuelUnit = savedFuelMJ / normalizedCalValue; 
+    // 计算节省的燃料（用于经济性和CO2计算）
+    // 热泵回收的热量 = recoveredHeat (kW)
+    // 如果不用热泵，这部分热量需要由锅炉提供
+    // 锅炉需要的燃料输入 = recoveredHeat / boilerEff
+    // 节省的燃料 = (recoveredHeat / boilerEff) * 3.6 / normalizedCalValue
+    const savedFuelInputKW = recoveredHeat / state.boilerEff;  // 节省的燃料输入功率 (kW)
+    const savedFuelMJ = savedFuelInputKW * 3.6;  // 转换为 MJ
+    const savedFuelUnit = savedFuelMJ / normalizedCalValue;  // 转换为燃料单位 (m3 或 kg)
     const savedCost = savedFuelUnit * state.fuelPrice;
     
     const driveCost = driveEnergy * state.elecPrice; 
@@ -656,6 +790,100 @@ async function runPythonSchemeC(state) {
     const annualSaving = hourlySaving * state.annualHours;
     const payback = (recoveredHeat * state.capexHP) / annualSaving;
 
+    // 🔧 修复：计算 CO2 减排率
+    const baselineCo2PerHour = baseline.co2PerHour;
+    
+    // 计算热泵替代掉的CO2（节省的燃料产生的CO2）
+    const hpReplacedCo2 = savedFuelUnit * boiler.fuelData.co2Factor;  // 替代掉的CO2 (kg/h)
+    
+    // 计算热泵驱动能耗产生的CO2
+    let driveCo2 = 0, drivePrimary = 0;
+    if (state.recoveryType === RECOVERY_TYPES.MVR) {
+        // 电动热泵：驱动是电力
+        driveCo2 = driveEnergy * FUEL_DB['ELECTRICITY'].co2Factor;  // kg/h
+        drivePrimary = driveEnergy * (state.pefElec || 2.5);
+    } else {
+        // 吸收式热泵：驱动是热（燃料）
+        const driveInputFuelKW = driveEnergy / state.boilerEff;
+        const driveInputMJ = driveInputFuelKW * 3.6;
+        const driveFuelUnits = driveInputMJ / normalizedCalValue;
+        driveCo2 = driveFuelUnits * boiler.fuelData.co2Factor;  // kg/h
+        drivePrimary = driveInputFuelKW * 1.05;
+    }
+    
+    // 计算当前系统的CO2排放
+    // 当前系统 = 基准系统 - 热泵替代的CO2 + 热泵驱动的CO2
+    const currentCo2 = (baselineCo2PerHour - hpReplacedCo2) + driveCo2;
+    
+    // 计算减排率
+    const co2Reduction = ((baselineCo2PerHour - currentCo2) / baselineCo2PerHour) * 100;
+    
+    // 🔧 调试日志：输出CO2计算详情
+    console.log("📊 CO2计算详情:", {
+        "基准负荷(kW)": state.loadValue.toFixed(2),
+        "基准CO2(kg/h)": baselineCo2PerHour.toFixed(2),
+        "热泵回收热量(kW)": recoveredHeat.toFixed(2),
+        "节省燃料输入(kW)": savedFuelInputKW.toFixed(2),
+        "节省燃料单位": savedFuelUnit.toFixed(4) + " " + boiler.fuelData.unit,
+        "替代CO2(kg/h)": hpReplacedCo2.toFixed(2),
+        "驱动能耗(kW)": driveEnergy.toFixed(2),
+        "驱动CO2(kg/h)": driveCo2.toFixed(2),
+        "当前系统CO2(kg/h)": currentCo2.toFixed(2),
+        "减排率(%)": co2Reduction.toFixed(2),
+        "计算公式": `(${baselineCo2PerHour.toFixed(2)} - ${currentCo2.toFixed(2)}) / ${baselineCo2PerHour.toFixed(2)} * 100`
+    });
+    
+    // 🔧 验证：检查计算是否合理
+    if (co2Reduction < -10) {
+        console.warn("⚠️ 警告：碳减排率为负且绝对值较大，请检查计算逻辑！");
+        console.warn("   可能原因：驱动CO2 > 替代CO2，或计算有误");
+    }
+    
+    // 🔧 修复：计算 PER
+    const per = (drivePrimary > 0) ? (recoveredHeat / drivePrimary) : 0;
+    
+    // 🔧 修复：计算耦合数据（Site Eff 和 PER）
+    const totalLoad = state.loadValue;
+    const boilerOutput = totalLoad - recoveredHeat;
+    const boilerInputFuel = boilerOutput / state.boilerEff;
+    
+    let siteInputTotal, primaryInputTotal;
+    const pefFuel = 1.05;
+    
+    if (state.recoveryType === RECOVERY_TYPES.MVR) {
+        siteInputTotal = boilerInputFuel + driveEnergy;
+        primaryInputTotal = (boilerInputFuel * pefFuel) + (driveEnergy * (state.pefElec || 2.5));
+    } else {
+        const hpInputFuel = (driveEnergy / state.boilerEff);
+        siteInputTotal = boilerInputFuel + hpInputFuel;
+        primaryInputTotal = (boilerInputFuel + hpInputFuel) * pefFuel;
+    }
+    
+    const siteEffBefore = state.boilerEff;
+    const siteEffAfter = totalLoad / siteInputTotal;
+    const perBefore = state.boilerEff / pefFuel;
+    const perAfter = totalLoad / primaryInputTotal;
+    
+    const couplingData = {
+        site: {
+            before: siteEffBefore * 100,
+            after: siteEffAfter * 100,
+            delta: (siteEffAfter - siteEffBefore) * 100
+        },
+        per: {
+            before: perBefore,
+            after: perAfter,
+            delta: perAfter - perBefore
+        }
+    };
+    
+    // 🔧 修复：计算 tonData
+    const tonData = {
+        total: state.loadValue / 700,
+        hp: recoveredHeat / 700,
+        boiler: (state.loadValue - recoveredHeat) / 700
+    };
+    
     const res = {
         cop: pyRes.final_cop,
         lift: (state.loadOut + 5) - (pyRes.required_source_out - 5),
@@ -670,13 +898,20 @@ async function runPythonSchemeC(state) {
             sourceIn: state.flueIn,
             sourceOut: pyRes.required_source_out,
             loadIn: state.loadIn, 
-            loadOut: state.loadOut,
-            capacity: recoveredHeat
+            loadOut: actualLoadOut,  // 使用实际出水温度
+            capacity: recoveredHeat,
+            // 🔧 新增：热源参数
+            sourceFlowVol: sourcePot.flowVol,  // 热源体积流量 (m3/h)
+            sourceFlowMass: flueGasMassFlow,  // 热源质量流量 (kg/h)
+            sourceComposition: flueGasComposition,  // 热源成分组成
+            // 🔧 新增：热汇参数
+            sinkFlowMass: flow_kg_h  // 热汇质量流量 (kg/h)
         },
         
-        co2ReductionRate: 0, 
-        per: 0,
-        couplingData: { site: {before:0, after:0, delta:0}, per: {before:0, after:0, delta:0} },
+        co2ReductionRate: co2Reduction,  // 🔧 修复：使用计算值
+        per: per,  // 🔧 修复：使用计算值
+        couplingData: couplingData,  // 🔧 修复：使用计算值
+        tonData: tonData,  // 🔧 修复：添加 tonData
         decision: { winner: annualSaving>0?'HP':'BASE', level: 'STRONG', title: 'Python Analysis', desc: '基于后端 AI 求解器结果' }
     };
     
@@ -734,7 +969,51 @@ function handleSimulationResult(res, state) {
     // 2. 基础数据更新
     currentReqData = res.reqData;
 
+    // 🔧 修复：显示实际COP，但计算并提示目标COP（用于对比）
+    let copTooltip = '';
+    
+    if (state.topology === TOPOLOGY.RECOVERY && res.reqData) {
+        const actualFlueOut = res.reqData.sourceOut;
+        const targetFlueOut = state.flueOut;
+        
+        // 如果实际排烟温度与目标不同，计算目标温度下的理论COP用于对比
+        if (Math.abs(actualFlueOut - targetFlueOut) > 1.0) {
+            // 计算目标温度下的理论COP
+            let simulationTargetTemp;
+            if (state.mode === MODES.STEAM) {
+                simulationTargetTemp = getSatTempFromPressure(state.targetTemp);
+                if (state.steamStrategy === STRATEGIES.PREHEAT && simulationTargetTemp > 98.0) {
+                    simulationTargetTemp = 98.0;
+                }
+            } else {
+                simulationTargetTemp = state.loadOut;
+            }
+            
+            const tCond = simulationTargetTemp + 5.0;
+            const tEvap = targetFlueOut - 5.0;
+            
+            const targetCopRes = calculateCOP({
+                evapTemp: tEvap,
+                condTemp: Math.min(tCond, 160.0),
+                efficiency: state.perfectionDegree,
+                mode: state.mode,
+                strategy: state.steamStrategy,
+                recoveryType: state.recoveryType
+            });
+            
+            if (!targetCopRes.error) {
+                copTooltip = `实际运行: COP=${res.cop.toFixed(2)} @ 排烟${actualFlueOut.toFixed(1)}°C (热源不足)\n目标理论: COP=${targetCopRes.cop.toFixed(2)} @ 排烟${targetFlueOut.toFixed(1)}°C`;
+                console.log(`📊 COP对比: 实际=${res.cop.toFixed(2)} @ ${actualFlueOut.toFixed(1)}°C, 目标理论=${targetCopRes.cop.toFixed(2)} @ ${targetFlueOut.toFixed(1)}°C`);
+            }
+        }
+    }
+    
+    // 显示实际COP（这是系统真实运行条件下的COP）
     ui.resCop.innerText = res.cop.toFixed(2);
+    if (copTooltip) {
+        ui.resCop.title = copTooltip;
+        ui.resCop.style.cursor = 'help';
+    }
     ui.resLift.innerText = (res.lift || 0).toFixed(1);
 
     // 3. 耦合效能更新
@@ -796,8 +1075,9 @@ function handleSimulationResult(res, state) {
         }
     }
 
-    // 6. 图表更新
-    updatePerformanceChart(state);
+    // 6. 图表更新 - 🔧 修复：传递实际计算结果，用于标记实际运行点
+    console.log("🔄 准备更新图表，当前状态:", state);
+    updatePerformanceChart(state, res);
 
     // 7. 系统图更新
     let displaySupplyT;
@@ -839,19 +1119,32 @@ function log(msg, type = 'info') {
 bindEvents();
 
 const initialState = store.getState();
+// 🔧 修复：从HTML读取所有输入框的初始值，确保与用户界面一致
 const initialAdvancedState = {
-    fuelCalValue: parseFloat(ui.inpFuelCal.value) || 10.0,
+    // 基本温度参数（从HTML读取）
+    flueIn: parseFloat(ui.inpFlueIn?.value) || initialState.flueIn,
+    flueOut: parseFloat(ui.inpFlueOut?.value) || initialState.flueOut,
+    loadIn: parseFloat(ui.inpLoadIn?.value) || initialState.loadIn,
+    loadOut: parseFloat(ui.inpLoadOut?.value) || initialState.loadOut,
+    sourceTemp: parseFloat(ui.inpSource?.value) || initialState.sourceTemp,
+    sourceOut: parseFloat(ui.inpSourceOut?.value) || initialState.sourceOut,
+    loadInStd: parseFloat(ui.inpLoadInStd?.value) || initialState.loadInStd,
+    targetTemp: parseFloat(ui.inpTarget?.value) || initialState.targetTemp,
+    excessAir: parseFloat(ui.inpExcessAir?.value) || initialState.excessAir,
+    
+    // 高级参数
+    fuelCalValue: parseFloat(ui.inpFuelCal?.value) || 10.0,
     fuelCalUnit: CAL_UNIT_OPTIONS[0].value, 
-    fuelCo2Value: parseFloat(ui.inpFuelCo2.value) || 0.202,
+    fuelCo2Value: parseFloat(ui.inpFuelCo2?.value) || 0.202,
     fuelCo2Unit: CO2_UNIT_OPTIONS[0].value, 
-    perfectionDegree: parseFloat(ui.selPerfection.value) || 0.45,
-    boilerEff: parseFloat(ui.inpFuelEff.value) || 0.92,
-    manualCop: parseFloat(ui.inpManualCop.value) || 3.5,
-    isManualCop: ui.chkManualCop.checked || false,
-    elecPrice: parseFloat(ui.inpElecPrice.value) || 0.75,
-    fuelPrice: parseFloat(ui.inpFuelPrice.value) || 3.80,
-    capexHP: parseFloat(ui.inpCapexHP.value) || 2500,
-    capexBase: parseFloat(ui.inpCapexBase.value) || 200
+    perfectionDegree: parseFloat(ui.selPerfection?.value) || 0.45,
+    boilerEff: parseFloat(ui.inpFuelEff?.value) || 0.92,
+    manualCop: parseFloat(ui.inpManualCop?.value) || 3.5,
+    isManualCop: ui.chkManualCop?.checked || false,
+    elecPrice: parseFloat(ui.inpElecPrice?.value) || 0.75,
+    fuelPrice: parseFloat(ui.inpFuelPrice?.value) || 3.80,
+    capexHP: parseFloat(ui.inpCapexHP?.value) || 2500,
+    capexBase: parseFloat(ui.inpCapexBase?.value) || 200
 };
 
 populateUnitSelect(ui.selUnitCal, CAL_UNIT_OPTIONS, initialAdvancedState.fuelCalUnit);

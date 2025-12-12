@@ -7,31 +7,31 @@ const initialState = {
     topology: TOPOLOGY.RECOVERY, // 默认方案 C (烟气回收)
     
     // === 核心工艺模式 ===
-    mode: MODES.WATER,
+    mode: MODES.STEAM,       // 截屏默认值：蒸汽模式
     steamStrategy: STRATEGIES.PREHEAT,
-    recoveryType: RECOVERY_TYPES.ABS, // 默认吸收式
+    recoveryType: RECOVERY_TYPES.MVR, // 截屏默认值：电动压缩式
     
     // === 关键温度参数 (°C) ===
     // 1. 热源侧
     sourceTemp: 35.0,        // 方案 A/B: 环境/余热源入口温度 (In)
     sourceOut: 30.0,         // [New] 方案 B: 余热源出口温度 (Out)
     
-    flueIn: 130.0,           // 方案 C: 初始排烟温度
-    flueOut: 40.0,           // 方案 C: 目标排烟温度
+    flueIn: 130.0,           // 方案 C: 初始排烟温度 (与HTML默认值一致)
+    flueOut: 40.0,           // 方案 C: 目标排烟温度 (与HTML默认值一致)
     excessAir: 1.20,         // [v9.1] 燃烧过量空气系数 (Alpha)
 
     // 2. 热汇/负载侧
-    targetTemp: 60.0,        // 系统最终目标温度 (热水供水 / 蒸汽饱和温度)
+    targetTemp: 2.5,         // 系统最终目标温度 (热水供水 / 蒸汽饱和压力 MPa) (截屏默认值 2.5 MPa)
     
-    loadIn: 50.0,            // 方案 C: 补水/回水入口温度
-    loadOut: 70.0,           // 方案 C: 热泵预热目标/出口温度
+    loadIn: 70.0,            // 方案 C: 补水/回水入口温度 (截屏默认值)
+    loadOut: 90.0,           // 方案 C: 热泵预热目标/出口温度 (截屏默认值)
     
     loadInStd: 50.0,         // [New] 方案 A/B: 专用的热汇入口温度 (回水/补水)
 
     // === 负荷与效率 ===
-    loadValue: 2000.0,       // 设计热负荷 (kW)
-    loadUnit: 'KW',          // KW | TON
-    loadValueTons: 2.86,     // (2000/700) 初始蒸吨值
+    loadValue: 17500.0,      // 设计热负荷 (kW) - 方案C蒸汽默认值 25 Ton/h = 17500 kW
+    loadUnit: 'TON',         // KW | TON
+    loadValueTons: 25.0,     // 方案C的工艺需求蒸汽默认值 (25 蒸吨)
     perfectionDegree: 0.45,  // 热力完善度
     
     // === [New] 手动 COP 控制 ===
@@ -46,8 +46,8 @@ const initialState = {
     
     // === 经济性参数 ===
     fuelType: 'NATURAL_GAS',
-    elecPrice: 0.75,         // 电价 (元/kWh)
-    fuelPrice: 3.80,         // 燃料单价
+    elecPrice: 0.7,          // 电价 (元/kWh) (截屏默认值)
+    fuelPrice: 4.0,           // 燃料单价 (截屏默认值)
     annualHours: 6000,       // 年运行小时
     boilerEff: 0.92,         // 锅炉效率
     

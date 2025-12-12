@@ -1,15 +1,23 @@
 // src/ui/charts.js
 import Chart from 'chart.js/auto';
 import { calculateCOP } from '../core/cycles.js';
-import { MODES, TOPOLOGY, RECOVERY_TYPES } from '../core/constants.js';
+import { MODES, TOPOLOGY, RECOVERY_TYPES, LIMITS, STRATEGIES } from '../core/constants.js';
 import { getSatTempFromPressure } from '../core/physics.js';
 
 let chartInstance = null;
 
-export function updatePerformanceChart(state) {
+export function updatePerformanceChart(state, actualResult = null) {
     const ctx = document.getElementById('performance-chart');
-    if (!ctx) return;
+    if (!ctx) {
+        console.error("❌ 图表容器 'performance-chart' 未找到！");
+        return;
+    }
 
+    console.log("📊 开始更新性能曲线图表...", state);
+    if (actualResult) {
+        console.log("📊 实际计算结果:", actualResult);
+    }
+    
     if (chartInstance) chartInstance.destroy();
 
     const { 
@@ -46,8 +54,26 @@ export function updatePerformanceChart(state) {
         }
     }
 
-    // 统一冷凝温度逻辑：目标温度 + 5K 安全余量 (与 HeatPump.js 保持一致)
-    const tCond = simulationTargetTemp + 5.0;
+    // 🔧 修复：与实际计算逻辑保持一致（HeatPump.js 中的逻辑）
+    // 对于蒸汽预热模式，热泵只能加热到 98°C（防止沸腾）
+    const SAFE_PREHEAT_LIMIT = 98.0;
+    let effectiveTargetTemp = simulationTargetTemp;
+    
+    if (topology === TOPOLOGY.RECOVERY && mode === MODES.STEAM && steamStrategy === STRATEGIES.PREHEAT) {
+        if (effectiveTargetTemp > SAFE_PREHEAT_LIMIT) {
+            effectiveTargetTemp = SAFE_PREHEAT_LIMIT;
+            console.log(`📊 图表：蒸汽预热模式，目标温度限制为 ${SAFE_PREHEAT_LIMIT}°C（与实际计算一致）`);
+        }
+    }
+
+    // 统一冷凝温度逻辑：有效目标温度 + 5K 安全余量 (与 HeatPump.js 保持一致)
+    let tCond = effectiveTargetTemp + 5.0;
+    
+    // 如果仍然超过技术上限，使用上限值（但这种情况应该很少，因为已经限制了 98°C）
+    if (tCond > LIMITS.MAX_COND_TEMP) {
+        console.warn(`⚠️ 冷凝温度 ${tCond.toFixed(1)}°C 超过技术上限 ${LIMITS.MAX_COND_TEMP}°C，图表使用上限值`);
+        tCond = LIMITS.MAX_COND_TEMP;
+    }
 
     // === 1. 余热回收模式 (Scheme C) ===
     if (topology === TOPOLOGY.RECOVERY) {
@@ -55,7 +81,7 @@ export function updatePerformanceChart(state) {
         xLabel = "目标排烟温度 (Target Exhaust Out, °C)";
         
         const techName = (recoveryType === RECOVERY_TYPES.ABS) ? '吸收式' : 'MVR热泵';
-        chartTitle = `深度回收特性: ${techName} (供热目标 ${simulationTargetTemp.toFixed(1)}°C)`;
+        chartTitle = `深度回收特性: ${techName} (供热目标 ${effectiveTargetTemp.toFixed(1)}°C)`;
 
         for (let tOut = 30; tOut <= 80; tOut += 5) {
             labels.push(tOut);
@@ -66,13 +92,22 @@ export function updatePerformanceChart(state) {
 
             const res = calculateCOP({
                 evapTemp: tEvap,
-                condTemp: tCond, // 使用修正后的统一冷凝温度
+                condTemp: tCond, // 使用与实际计算一致的冷凝温度
                 efficiency: perfectionDegree,
                 mode: mode,
                 strategy: steamStrategy,
                 recoveryType: recoveryType
             });
-            dataCOP.push(res.error ? null : res.cop);
+            
+            // 🔧 修复：即使有错误，也尝试显示一个合理的 COP 值（用于图表展示）
+            if (res.error) {
+                console.warn(`⚠️ 计算 COP 时出错 (tOut=${tOut}°C): ${res.error}`);
+                // 对于图表展示，如果计算失败，使用一个默认值或跳过
+                // 这里使用 null，Chart.js 会自动跳过该点
+                dataCOP.push(null);
+            } else {
+                dataCOP.push(res.cop);
+            }
         }
     } 
     // === 2. 标准模式 (Scheme A/B) ===
@@ -121,30 +156,113 @@ export function updatePerformanceChart(state) {
         }
     }
 
-    chartInstance = new Chart(ctx, {
-        type: 'line',
-        data: {
-            labels,
-            datasets: [{
-                label: 'Heat Pump COP', // [UI Fix] 明确是热泵机组 COP
-                data: dataCOP,
-                borderColor: (topology === TOPOLOGY.RECOVERY && recoveryType === RECOVERY_TYPES.ABS) ? '#f59e0b' : '#10b981', 
-                borderWidth: 3,
-                tension: 0.4,
-                pointBackgroundColor: '#fff'
-            }]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: {
-                title: { display: true, text: chartTitle },
-                tooltip: { callbacks: { label: (c) => `COP: ${c.raw}` } }
-            },
-            scales: {
-                y: { min: 0, suggestedMax: 6.0 },
-                x: { title: { display: true, text: xLabel } }
+    console.log("📊 图表数据:", { labels, dataCOP, xLabel, chartTitle });
+    
+    // 🔧 验证数据：检查是否有有效数据点
+    const validDataCount = dataCOP.filter(v => v !== null && v !== undefined).length;
+    if (validDataCount === 0) {
+        console.error("❌ 图表数据全部无效！所有 COP 值都是 null");
+        // 即使数据无效，也尝试绘制一个空图表，至少显示坐标轴
+    } else {
+        console.log(`✅ 有效数据点: ${validDataCount}/${dataCOP.length}`);
+    }
+    
+    // 🔧 修复：添加实际运行点标记
+    let actualPointData = null;
+    let targetPointData = null;
+    
+    if (actualResult && topology === TOPOLOGY.RECOVERY) {
+        // 实际运行点：使用实际排烟温度
+        const actualFlueOut = actualResult.reqData?.sourceOut || actualResult.sourceOut;
+        if (actualFlueOut) {
+            const actualIndex = labels.findIndex((label, idx) => {
+                return Math.abs(label - actualFlueOut) < 2.5; // 找到最接近的点
+            });
+            if (actualIndex >= 0) {
+                actualPointData = {
+                    x: labels[actualIndex],
+                    y: actualResult.cop,
+                    label: `实际运行点 (${actualFlueOut.toFixed(1)}°C, COP=${actualResult.cop.toFixed(2)})`
+                };
             }
         }
-    });
+        
+        // 目标运行点：使用用户输入的目标排烟温度
+        const targetFlueOut = state.flueOut;
+        if (targetFlueOut && targetFlueOut !== actualFlueOut) {
+            const targetIndex = labels.findIndex((label, idx) => {
+                return Math.abs(label - targetFlueOut) < 2.5;
+            });
+            if (targetIndex >= 0 && dataCOP[targetIndex] !== null) {
+                targetPointData = {
+                    x: labels[targetIndex],
+                    y: dataCOP[targetIndex],
+                    label: `目标运行点 (${targetFlueOut.toFixed(1)}°C, COP=${dataCOP[targetIndex].toFixed(2)})`
+                };
+            }
+        }
+    }
+    
+    const datasets = [{
+        label: 'Heat Pump COP', // [UI Fix] 明确是热泵机组 COP
+        data: dataCOP,
+        borderColor: (topology === TOPOLOGY.RECOVERY && recoveryType === RECOVERY_TYPES.ABS) ? '#f59e0b' : '#10b981', 
+        borderWidth: 3,
+        tension: 0.4,
+        pointBackgroundColor: '#fff',
+        pointRadius: 3
+    }];
+    
+    // 添加实际运行点
+    if (actualPointData) {
+        datasets.push({
+            label: '实际运行点',
+            data: [actualPointData],
+            borderColor: '#ef4444',
+            backgroundColor: '#ef4444',
+            pointRadius: 8,
+            pointHoverRadius: 10,
+            showLine: false,
+            pointStyle: 'circle'
+        });
+    }
+    
+    // 添加目标运行点（如果与实际点不同）
+    if (targetPointData && (!actualPointData || Math.abs(targetPointData.x - actualPointData.x) > 5)) {
+        datasets.push({
+            label: '目标运行点',
+            data: [targetPointData],
+            borderColor: '#3b82f6',
+            backgroundColor: '#3b82f6',
+            pointRadius: 6,
+            pointHoverRadius: 8,
+            showLine: false,
+            pointStyle: 'triangle'
+        });
+    }
+    
+    try {
+        chartInstance = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels,
+                datasets: datasets
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    title: { display: true, text: chartTitle },
+                    tooltip: { callbacks: { label: (c) => `COP: ${c.raw}` } }
+                },
+                scales: {
+                    y: { min: 0, suggestedMax: 6.0 },
+                    x: { title: { display: true, text: xLabel } }
+                }
+            }
+        });
+        console.log("✅ 图表绘制成功！");
+    } catch (error) {
+        console.error("❌ 图表绘制失败:", error);
+    }
 }

@@ -15,6 +15,7 @@ class SchemeCRequest(BaseModel):
     sink_flow_kg_h: float    # 水流量 (e.g. 50000 kg/h)
     
     source_in_temp: float    # 烟气进口温度 (e.g. 130)
+    source_out_target: float = 30.0  # 🔧 新增：用户输入的目标排烟温度 (e.g. 80)
     source_flow_vol: float   # 烟气流量 (e.g. 30000 m3/h)
     
     efficiency: float = 0.55 # 完善度
