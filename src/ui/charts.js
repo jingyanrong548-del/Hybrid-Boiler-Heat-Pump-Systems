@@ -22,7 +22,7 @@ export function updatePerformanceChart(state, actualResult = null) {
 
     const { 
         topology, mode, steamStrategy, recoveryType, perfectionDegree, 
-        targetTemp, sourceTemp, loadOut 
+        targetTemp, sourceTemp, sourceOut, loadOut, isManualCop, manualCop
     } = state;
 
     let labels = [];
@@ -81,32 +81,41 @@ export function updatePerformanceChart(state, actualResult = null) {
         xLabel = "目标排烟温度 (Target Exhaust Out, °C)";
         
         const techName = (recoveryType === RECOVERY_TYPES.ABS) ? '吸收式' : 'MVR热泵';
-        chartTitle = `深度回收特性: ${techName} (供热目标 ${effectiveTargetTemp.toFixed(1)}°C)`;
+        const manualCopNote = isManualCop ? ` [手动锁定: ${manualCop.toFixed(2)}]` : '';
+        chartTitle = `深度回收特性: ${techName} (供热目标 ${effectiveTargetTemp.toFixed(1)}°C)${manualCopNote}`;
 
-        for (let tOut = 30; tOut <= 80; tOut += 5) {
-            labels.push(tOut);
-            
-            // 物理假设：换热器端差 5K
-            // 如果把排烟降到 tOut，那么热泵蒸发温度约为 tOut - 5
-            const tEvap = tOut - 5.0; 
+        // 🔧 修复：如果启用手动COP锁定，图表显示固定COP值
+        if (isManualCop && manualCop > 0) {
+            for (let tOut = 30; tOut <= 80; tOut += 5) {
+                labels.push(tOut);
+                dataCOP.push(manualCop);  // 所有点都使用手动COP值
+            }
+        } else {
+            for (let tOut = 30; tOut <= 80; tOut += 5) {
+                labels.push(tOut);
+                
+                // 物理假设：换热器端差 5K
+                // 如果把排烟降到 tOut，那么热泵蒸发温度约为 tOut - 5
+                const tEvap = tOut - 5.0; 
 
-            const res = calculateCOP({
-                evapTemp: tEvap,
-                condTemp: tCond, // 使用与实际计算一致的冷凝温度
-                efficiency: perfectionDegree,
-                mode: mode,
-                strategy: steamStrategy,
-                recoveryType: recoveryType
-            });
-            
-            // 🔧 修复：即使有错误，也尝试显示一个合理的 COP 值（用于图表展示）
-            if (res.error) {
-                console.warn(`⚠️ 计算 COP 时出错 (tOut=${tOut}°C): ${res.error}`);
-                // 对于图表展示，如果计算失败，使用一个默认值或跳过
-                // 这里使用 null，Chart.js 会自动跳过该点
-                dataCOP.push(null);
-            } else {
-                dataCOP.push(res.cop);
+                const res = calculateCOP({
+                    evapTemp: tEvap,
+                    condTemp: tCond, // 使用与实际计算一致的冷凝温度
+                    efficiency: perfectionDegree,
+                    mode: mode,
+                    strategy: steamStrategy,
+                    recoveryType: recoveryType
+                });
+                
+                // 🔧 修复：即使有错误，也尝试显示一个合理的 COP 值（用于图表展示）
+                if (res.error) {
+                    console.warn(`⚠️ 计算 COP 时出错 (tOut=${tOut}°C): ${res.error}`);
+                    // 对于图表展示，如果计算失败，使用一个默认值或跳过
+                    // 这里使用 null，Chart.js 会自动跳过该点
+                    dataCOP.push(null);
+                } else {
+                    dataCOP.push(res.cop);
+                }
             }
         }
     } 
@@ -116,42 +125,91 @@ export function updatePerformanceChart(state, actualResult = null) {
 
         if (mode === MODES.STEAM) {
             xLabel = "饱和蒸汽压力 (MPa,a)";
-            chartTitle = `蒸汽工况 COP 趋势 (热源 ${sourceTemp}°C)`;
-            for (let p = 0.1; p <= 1.2; p += 0.1) {
-                const val = parseFloat(p.toFixed(1));
-                labels.push(val);
-                const tSat = getSatTempFromPressure(val);
-                
-                // 动态计算该压力下的冷凝温度
-                const tCondDynamic = tSat + 8.0; // 蒸汽工况通常余量稍大
+            const manualCopNote = isManualCop ? ` [手动锁定: ${manualCop.toFixed(2)}]` : '';
+            chartTitle = `蒸汽工况 COP 趋势 (热源 ${sourceTemp}°C)${manualCopNote}`;
+            
+            // 🔧 修复：如果启用手动COP锁定，图表显示固定COP值
+            if (isManualCop && manualCop > 0) {
+                for (let p = 0.1; p <= 1.2; p += 0.1) {
+                    const val = parseFloat(p.toFixed(1));
+                    labels.push(val);
+                    dataCOP.push(manualCop);  // 所有点都使用手动COP值
+                }
+            } else {
+                for (let p = 0.1; p <= 1.2; p += 0.1) {
+                    const val = parseFloat(p.toFixed(1));
+                    labels.push(val);
+                    const tSat = getSatTempFromPressure(val);
+                    
+                    // 动态计算该压力下的冷凝温度
+                    const tCondDynamic = tSat + 8.0; // 蒸汽工况通常余量稍大
 
-                const res = calculateCOP({
-                    evapTemp: sourceTemp - 5,
-                    condTemp: tCondDynamic,
-                    efficiency: perfectionDegree,
-                    mode: MODES.STEAM,
-                    strategy: steamStrategy,
-                    recoveryType: stdRecType 
-                });
-                dataCOP.push(res.error ? null : res.cop);
+                    // 🔧 修改：方案A/B的蒸发温度计算与System.js保持一致
+                    let tEvap;
+                    if (topology === TOPOLOGY.PARALLEL) {
+                        // 方案A：tSourceOut = tSourceIn - 5, tEvap = tSourceOut - 5 = tSourceIn - 10
+                        tEvap = sourceTemp - 10.0;
+                    } else {
+                        // 方案B：tEvap = tSourceOut - 5
+                        // 使用实际的sourceOut值（如果存在），否则使用默认差值
+                        const actualSourceOut = sourceOut || (sourceTemp - 5.0);
+                        tEvap = actualSourceOut - 5.0;
+                    }
+
+                    const res = calculateCOP({
+                        evapTemp: tEvap,
+                        condTemp: tCondDynamic,
+                        efficiency: perfectionDegree,
+                        mode: MODES.STEAM,
+                        strategy: steamStrategy,
+                        recoveryType: stdRecType 
+                    });
+                    dataCOP.push(res.error ? null : res.cop);
+                }
             }
         } else {
             xLabel = "环境/热源温度 (°C)";
-            chartTitle = `变工况 COP 趋势 (供水 ${simulationTargetTemp.toFixed(1)}°C)`;
-            for (let t = -20; t <= 40; t += 5) {
-                labels.push(t);
-                
-                // 空气源/水源 蒸发温度估算
-                // 方案 A/B 统一假设 tEvap = tSource - 5 (简化图表逻辑)
-                const res = calculateCOP({
-                    evapTemp: t - 5,
-                    condTemp: tCond,
-                    efficiency: perfectionDegree,
-                    mode: MODES.WATER,
-                    strategy: steamStrategy, 
-                    recoveryType: stdRecType
-                });
-                dataCOP.push(res.error ? null : res.cop);
+            const manualCopNote = isManualCop ? ` [手动锁定: ${manualCop.toFixed(2)}]` : '';
+            chartTitle = `变工况 COP 趋势 (供水 ${simulationTargetTemp.toFixed(1)}°C)${manualCopNote}`;
+            
+            // 🔧 修复：如果启用手动COP锁定，图表显示固定COP值
+            if (isManualCop && manualCop > 0) {
+                // 🔧 修改：曲线图下限改为-40度
+                for (let t = -40; t <= 40; t += 5) {
+                    labels.push(t);
+                    dataCOP.push(manualCop);  // 所有点都使用手动COP值
+                }
+            } else {
+                // 🔧 修改：曲线图下限改为-40度
+                for (let t = -40; t <= 40; t += 5) {
+                    labels.push(t);
+                    
+                    // 空气源/水源 蒸发温度估算
+                    // 🔧 修改：与System.js中的计算逻辑保持一致
+                    let tEvap;
+                    if (topology === TOPOLOGY.PARALLEL) {
+                        // 方案A：进出风温差5度，蒸发温度与出风温度差值5度
+                        // tSourceOut = tSourceIn - 5, tEvap = tSourceOut - 5 = tSourceIn - 10
+                        const tSourceOut = t - 5.0;
+                        tEvap = tSourceOut - 5.0;  // t - 10
+                    } else {
+                        // 方案B：tEvap = tSourceOut - 5
+                        // 在图表中，t 代表热源入口温度，需要根据sourceOut计算
+                        // 如果sourceOut存在，使用它；否则假设典型差值
+                        const actualSourceOut = sourceOut || (t - 5.0);
+                        tEvap = actualSourceOut - 5.0;
+                    }
+                    
+                    const res = calculateCOP({
+                        evapTemp: tEvap,
+                        condTemp: tCond,
+                        efficiency: perfectionDegree,
+                        mode: MODES.WATER,
+                        strategy: steamStrategy, 
+                        recoveryType: stdRecType
+                    });
+                    dataCOP.push(res.error ? null : res.cop);
+                }
             }
         }
     }
@@ -167,38 +225,70 @@ export function updatePerformanceChart(state, actualResult = null) {
         console.log(`✅ 有效数据点: ${validDataCount}/${dataCOP.length}`);
     }
     
-    // 🔧 修复：添加实际运行点标记
+    // 🔧 修复：添加实际运行点标记（所有方案）
     let actualPointData = null;
     let targetPointData = null;
     
-    if (actualResult && topology === TOPOLOGY.RECOVERY) {
-        // 实际运行点：使用实际排烟温度
-        const actualFlueOut = actualResult.reqData?.sourceOut || actualResult.sourceOut;
-        if (actualFlueOut) {
-            const actualIndex = labels.findIndex((label, idx) => {
-                return Math.abs(label - actualFlueOut) < 2.5; // 找到最接近的点
-            });
-            if (actualIndex >= 0) {
-                actualPointData = {
-                    x: labels[actualIndex],
-                    y: actualResult.cop,
-                    label: `实际运行点 (${actualFlueOut.toFixed(1)}°C, COP=${actualResult.cop.toFixed(2)})`
-                };
+    if (actualResult) {
+        if (topology === TOPOLOGY.RECOVERY) {
+            // 方案C：实际运行点使用实际排烟温度
+            const actualFlueOut = actualResult.reqData?.sourceOut || actualResult.sourceOut;
+            if (actualFlueOut) {
+                const actualIndex = labels.findIndex((label, idx) => {
+                    return Math.abs(label - actualFlueOut) < 2.5; // 找到最接近的点
+                });
+                if (actualIndex >= 0) {
+                    actualPointData = {
+                        x: labels[actualIndex],
+                        y: actualResult.cop,  // 使用实际计算的COP值
+                        label: `实际运行点 (${actualFlueOut.toFixed(1)}°C, COP=${actualResult.cop.toFixed(2)})`
+                    };
+                }
             }
-        }
-        
-        // 目标运行点：使用用户输入的目标排烟温度
-        const targetFlueOut = state.flueOut;
-        if (targetFlueOut && targetFlueOut !== actualFlueOut) {
-            const targetIndex = labels.findIndex((label, idx) => {
-                return Math.abs(label - targetFlueOut) < 2.5;
-            });
-            if (targetIndex >= 0 && dataCOP[targetIndex] !== null) {
-                targetPointData = {
-                    x: labels[targetIndex],
-                    y: dataCOP[targetIndex],
-                    label: `目标运行点 (${targetFlueOut.toFixed(1)}°C, COP=${dataCOP[targetIndex].toFixed(2)})`
-                };
+            
+            // 目标运行点：使用用户输入的目标排烟温度
+            const targetFlueOut = state.flueOut;
+            if (targetFlueOut && actualFlueOut && targetFlueOut !== actualFlueOut) {
+                const targetIndex = labels.findIndex((label, idx) => {
+                    return Math.abs(label - targetFlueOut) < 2.5;
+                });
+                if (targetIndex >= 0 && dataCOP[targetIndex] !== null) {
+                    targetPointData = {
+                        x: labels[targetIndex],
+                        y: dataCOP[targetIndex],
+                        label: `目标运行点 (${targetFlueOut.toFixed(1)}°C, COP=${dataCOP[targetIndex].toFixed(2)})`
+                    };
+                }
+            }
+        } else {
+            // 方案A/B：实际运行点使用当前热源温度
+            if (mode === MODES.WATER) {
+                // 热水模式：X轴是环境/热源温度
+                const currentSourceTemp = sourceTemp;
+                const actualIndex = labels.findIndex((label, idx) => {
+                    return Math.abs(label - currentSourceTemp) < 2.5;
+                });
+                if (actualIndex >= 0) {
+                    // 🔧 确保使用实际计算的COP值，而不是图表曲线上的值
+                    actualPointData = {
+                        x: labels[actualIndex],
+                        y: actualResult.cop,  // 使用实际计算的COP值
+                        label: `实际运行点 (${currentSourceTemp.toFixed(1)}°C, COP=${actualResult.cop.toFixed(2)})`
+                    };
+                }
+            } else {
+                // 蒸汽模式：X轴是饱和蒸汽压力
+                const currentPressure = targetTemp;
+                const actualIndex = labels.findIndex((label, idx) => {
+                    return Math.abs(label - currentPressure) < 0.05;
+                });
+                if (actualIndex >= 0) {
+                    actualPointData = {
+                        x: labels[actualIndex],
+                        y: actualResult.cop,  // 使用实际计算的COP值
+                        label: `实际运行点 (${currentPressure.toFixed(2)}MPa, COP=${actualResult.cop.toFixed(2)})`
+                    };
+                }
             }
         }
     }
@@ -253,7 +343,20 @@ export function updatePerformanceChart(state, actualResult = null) {
                 maintainAspectRatio: false,
                 plugins: {
                     title: { display: true, text: chartTitle },
-                    tooltip: { callbacks: { label: (c) => `COP: ${c.raw}` } }
+                    tooltip: { 
+                        callbacks: { 
+                            label: (context) => {
+                                if (context.dataset.label === '实际运行点' || context.dataset.label === '目标运行点') {
+                                    return context.dataset.label + `: COP=${context.raw.toFixed(2)}`;
+                                }
+                                return `COP: ${context.raw.toFixed(2)}`;
+                            }
+                        } 
+                    },
+                    legend: {
+                        display: true,
+                        position: 'top'
+                    }
                 },
                 scales: {
                     y: { min: 0, suggestedMax: 6.0 },

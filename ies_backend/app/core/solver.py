@@ -56,10 +56,14 @@ class SchemeCSolver:
         
         for i in range(self.max_iter):
             # A. COP
-            t_evap = current_t_source_out - 5.0
-            t_cond = effective_sink_target + 5.0
-            cycle_res = calculate_cop(t_evap, t_cond, req.efficiency, req.mode, "STRATEGY_GEN")
-            cop = cycle_res["cop"]
+            # 🔧 修复：如果启用手动COP锁定，直接使用手动COP值
+            if req.is_manual_cop and req.manual_cop > 0:
+                cop = req.manual_cop
+            else:
+                t_evap = current_t_source_out - 5.0
+                t_cond = effective_sink_target + 5.0
+                cycle_res = calculate_cop(t_evap, t_cond, req.efficiency, req.mode, "STRATEGY_GEN")
+                cop = cycle_res["cop"]
 
             # B. 需求
             cop_factor = (cop - 1) / cop if cop > 1.0 else 0
@@ -110,10 +114,16 @@ class SchemeCSolver:
         
         # 严格按照目标排烟温度计算
         final_t_source_out = target_flue_out
-        t_evap = final_t_source_out - 5.0
-        t_cond = effective_sink_target + 5.0
-        cycle_res = calculate_cop(t_evap, t_cond, req.efficiency, req.mode, "STRATEGY_GEN")
-        cop = cycle_res["cop"]
+        
+        # 🔧 修复：如果启用手动COP锁定，直接使用手动COP值
+        if req.is_manual_cop and req.manual_cop > 0:
+            cop = req.manual_cop
+            print(f"🔒 使用手动锁定COP: {cop:.2f}")
+        else:
+            t_evap = final_t_source_out - 5.0
+            t_cond = effective_sink_target + 5.0
+            cycle_res = calculate_cop(t_evap, t_cond, req.efficiency, req.mode, "STRATEGY_GEN")
+            cop = cycle_res["cop"]
         
         # 计算在该排烟温度下热源能支撑的最大负荷
         cop_factor = (cop - 1) / cop if cop > 1.0 else 0

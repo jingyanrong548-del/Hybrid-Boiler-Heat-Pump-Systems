@@ -1,6 +1,6 @@
 // src/ui/main.js
 import '../style.css'; 
-import { store } from '../state/store.js';
+import { store, getDefaultValuesA, getDefaultValuesB, getDefaultValuesC } from '../state/store.js';
 import { System } from '../models/System.js';
 import { Boiler } from '../models/Boiler.js'; // 用于计算烟气量
 import { fetchSchemeC } from '../core/api.js'; // 用于呼叫 Python
@@ -355,18 +355,51 @@ function renderTechSpecDirectly(reqData) {
 function bindEvents() {
     ui.topo.addEventListener('change', (e) => {
         const newTopo = e.target.value;
+        const currentMode = store.getState().mode;
         const updates = { topology: newTopo };
-        if (newTopo === TOPOLOGY.PARALLEL) updates.sourceTemp = -5.0; 
-        else if (newTopo === TOPOLOGY.COUPLED) updates.sourceTemp = 35.0; 
+        
+        // 根据新方案和当前模式设置对应的默认值
+        if (newTopo === TOPOLOGY.PARALLEL) {
+            Object.assign(updates, getDefaultValuesA(currentMode));
+        } else if (newTopo === TOPOLOGY.COUPLED) {
+            Object.assign(updates, getDefaultValuesB(currentMode));
+        } else if (newTopo === TOPOLOGY.RECOVERY) {
+            Object.assign(updates, getDefaultValuesC(currentMode));
+        }
+        
         store.setState(updates);
     });
 
     ui.btnWater.addEventListener('click', () => {
-        store.setState({ mode: MODES.WATER, targetTemp: 60.0, loadIn: 50.0, loadOut: 70.0, loadInStd: 50.0 });
+        const currentTopo = store.getState().topology;
+        const updates = { mode: MODES.WATER };
+        
+        // 根据当前方案设置热水模式的默认值
+        if (currentTopo === TOPOLOGY.PARALLEL) {
+            Object.assign(updates, getDefaultValuesA(MODES.WATER));
+        } else if (currentTopo === TOPOLOGY.COUPLED) {
+            Object.assign(updates, getDefaultValuesB(MODES.WATER));
+        } else if (currentTopo === TOPOLOGY.RECOVERY) {
+            Object.assign(updates, getDefaultValuesC(MODES.WATER));
+        }
+        
+        store.setState(updates);
     });
 
     ui.btnSteam.addEventListener('click', () => {
-        store.setState({ mode: MODES.STEAM, targetTemp: 0.5, loadIn: 20.0, loadOut: 90.0, loadInStd: 20.0 });
+        const currentTopo = store.getState().topology;
+        const updates = { mode: MODES.STEAM };
+        
+        // 根据当前方案设置蒸汽模式的默认值
+        if (currentTopo === TOPOLOGY.PARALLEL) {
+            Object.assign(updates, getDefaultValuesA(MODES.STEAM));
+        } else if (currentTopo === TOPOLOGY.COUPLED) {
+            Object.assign(updates, getDefaultValuesB(MODES.STEAM));
+        } else if (currentTopo === TOPOLOGY.RECOVERY) {
+            Object.assign(updates, getDefaultValuesC(MODES.STEAM));
+        }
+        
+        store.setState(updates);
     });
 
     if (ui.selFuel) {
@@ -737,7 +770,10 @@ async function runPythonSchemeC(state) {
         source_flow_vol: sourcePot.flowVol, 
         efficiency: state.perfectionDegree,
         mode: state.mode,
-        fuel_type: state.fuelType
+        fuel_type: state.fuelType,
+        // 🔧 新增：传递手动COP锁定参数
+        is_manual_cop: state.isManualCop,
+        manual_cop: state.manualCop
     };
     
     log(`📡 呼叫 Python: 流量=${flow_kg_h.toFixed(0)}kg/h, 烟气=${sourcePot.flowVol.toFixed(0)}m3/h`);
@@ -756,7 +792,20 @@ async function runPythonSchemeC(state) {
     // 🔧 修复：如果热源不足，使用实际能达到的负荷和出水温度
     const recoveredHeat = pyRes.target_load_kw;
     const actualLoadOut = pyRes.actual_sink_out || state.loadOut;  // 如果热源不足，使用实际出水温度
-    const driveEnergy = recoveredHeat / pyRes.final_cop;
+    
+    // 🔧 修复：如果启用手动COP锁定，使用手动COP值计算驱动能耗
+    const copForCalculation = (state.isManualCop && state.manualCop > 0) 
+        ? state.manualCop 
+        : pyRes.final_cop;
+    
+    // 🔧 调试日志：输出COP使用情况
+    if (state.isManualCop && state.manualCop > 0) {
+        console.log(`🔒 手动COP锁定已启用: 使用手动COP值 ${state.manualCop.toFixed(2)} (后端返回: ${pyRes.final_cop.toFixed(2)})`);
+    } else {
+        console.log(`📊 使用计算COP值: ${pyRes.final_cop.toFixed(2)}`);
+    }
+    
+    const driveEnergy = recoveredHeat / copForCalculation;
     
     // 如果热源不足，记录日志
     if (pyRes.is_source_limited) {
@@ -884,8 +933,14 @@ async function runPythonSchemeC(state) {
         boiler: (state.loadValue - recoveredHeat) / 700
     };
     
+    // 🔧 修复：如果启用手动COP锁定，确保使用手动COP值（即使后端返回了计算值）
+    // 这是一个双重保险，确保前端显示与用户设置一致
+    const finalCop = (state.isManualCop && state.manualCop > 0) 
+        ? state.manualCop 
+        : pyRes.final_cop;
+    
     const res = {
-        cop: pyRes.final_cop,
+        cop: finalCop,  // 🔧 修复：使用手动COP或后端返回的COP
         lift: (state.loadOut + 5) - (pyRes.required_source_out - 5),
         recoveredHeat: recoveredHeat,
         annualSaving: annualSaving,
@@ -989,17 +1044,23 @@ function handleSimulationResult(res, state) {
                 simulationTargetTemp = state.loadOut;
             }
             
-            const tCond = simulationTargetTemp + 5.0;
-            const tEvap = targetFlueOut - 5.0;
-            
-            const targetCopRes = calculateCOP({
-                evapTemp: tEvap,
-                condTemp: Math.min(tCond, 160.0),
-                efficiency: state.perfectionDegree,
-                mode: state.mode,
-                strategy: state.steamStrategy,
-                recoveryType: state.recoveryType
-            });
+            // 🔧 修复：如果启用手动COP锁定，使用手动COP值
+            let targetCopRes;
+            if (state.isManualCop && state.manualCop > 0) {
+                targetCopRes = { cop: state.manualCop, error: null };
+            } else {
+                const tCond = simulationTargetTemp + 5.0;
+                const tEvap = targetFlueOut - 5.0;
+                
+                targetCopRes = calculateCOP({
+                    evapTemp: tEvap,
+                    condTemp: Math.min(tCond, 160.0),
+                    efficiency: state.perfectionDegree,
+                    mode: state.mode,
+                    strategy: state.steamStrategy,
+                    recoveryType: state.recoveryType
+                });
+            }
             
             if (!targetCopRes.error) {
                 copTooltip = `实际运行: COP=${res.cop.toFixed(2)} @ 排烟${actualFlueOut.toFixed(1)}°C (热源不足)\n目标理论: COP=${targetCopRes.cop.toFixed(2)} @ 排烟${targetFlueOut.toFixed(1)}°C`;

@@ -249,8 +249,8 @@ export class System {
 
         if (s.topology === TOPOLOGY.PARALLEL) {
             tSourceIn = s.sourceTemp;
-            tEvap = tSourceIn - 8.0; 
-            tSourceOut = tSourceIn - 3.0; 
+            tSourceOut = tSourceIn - 5.0;  // 🔧 修改：进出风温差改为5度
+            tEvap = tSourceOut - 5.0;      // 🔧 修改：蒸发温度与出风温度差值5度
             sourceType = "室外空气 (Ambient Air)";
         } else {
             tSourceIn = s.sourceTemp;       

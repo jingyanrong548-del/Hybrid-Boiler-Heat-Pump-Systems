@@ -21,3 +21,7 @@ class SchemeCRequest(BaseModel):
     efficiency: float = 0.55 # 完善度
     mode: str = "WATER"      # WATER 或 STEAM
     fuel_type: str = "NATURAL_GAS" # 燃料类型(影响比热容)
+    
+    # 🔧 新增：手动COP锁定支持
+    is_manual_cop: bool = False  # 是否启用手动COP锁定
+    manual_cop: float = 3.5      # 手动COP值
