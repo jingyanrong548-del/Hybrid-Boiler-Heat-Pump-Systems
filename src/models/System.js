@@ -22,6 +22,32 @@ export class System {
         let effectiveLHV = s.fuelCalValue;
         let effectiveEff = s.boilerEff;
 
+        // 🔧 修复：热值单位归一化（确保统一为MJ/unit）
+        // 无论用户选什么单位，我们根据数值大小和单位判断是否需要转换
+        const fuelData = FUEL_DB[s.fuelType] || FUEL_DB['NATURAL_GAS'];
+        const defaultLHV = fuelData.calorificValue; // MJ/unit
+        
+        // 判定条件：
+        // 1. 明确选了 kWh 单位
+        const isUnitKWh = s.fuelCalUnit && s.fuelCalUnit.includes('kWh');
+        // 2. 或者：选了天然气，且数值小于 20 (说明填的是 ~10 kWh，而不是 ~36 MJ)
+        // 3. 或者：数值明显小于默认值的一半（很可能是kWh单位）
+        const isLowValue = (s.fuelType === 'NATURAL_GAS' && effectiveLHV < 20) || 
+                          (effectiveLHV < defaultLHV * 0.6);
+        
+        if (isUnitKWh || isLowValue) {
+            const originalLHV = effectiveLHV;
+            effectiveLHV = effectiveLHV * 3.6;
+            console.log(`🔧 热值单位转换:`, {
+                "原始值": originalLHV,
+                "原始单位": s.fuelCalUnit || "未知",
+                "转换原因": isUnitKWh ? "单位是kWh" : "检测到输入值可能是kWh量级",
+                "默认热值": defaultLHV.toFixed(1) + " MJ/" + fuelData.unit,
+                "转换后值": effectiveLHV.toFixed(1),
+                "转换后单位": "MJ/" + fuelData.unit
+            });
+        }
+
         if (s.fuelType === 'ELECTRICITY') {
             effectiveFuelPrice = s.elecPrice;
             if (effectiveCo2 < 0.3) effectiveCo2 = FUEL_DB['ELECTRICITY'].co2Factor;
@@ -36,7 +62,8 @@ export class System {
             flueOut: s.flueOut,
             excessAir: s.excessAir,       
             fuelCalValue: effectiveLHV, 
-            fuelCo2Value: effectiveCo2 
+            fuelCo2Value: effectiveCo2,
+            fuelCo2Unit: s.fuelCo2Unit || 'kgCO2/unit'  // 🔧 修复：传递CO2因子单位
         });
         
         const baseline = boiler.calculateBaseline(effectiveFuelPrice);
@@ -44,7 +71,7 @@ export class System {
         if (s.topology === TOPOLOGY.RECOVERY) {
             return this.runRecoverySimulation(boiler, baseline, effectiveFuelPrice);
         } else {
-            return this.runStandardSimulation(baseline, effectiveFuelPrice);
+            return this.runStandardSimulation(boiler, baseline, effectiveFuelPrice);
         }
     }
 
@@ -227,6 +254,32 @@ export class System {
         // 4. 计算减排率 = (基准CO2 - 耦合CO2) / 基准CO2 * 100
         const co2Reduction = ((baselineCo2PerHour - currentCo2) / baselineCo2PerHour) * 100;
         
+        // 🔧 调试：输出方案C CO2计算详情
+        const fuelData = FUEL_DB[s.fuelType] || FUEL_DB['NATURAL_GAS'];
+        const effectiveCo2Factor = boiler.fuelData.co2Factor;
+        console.log("═══════════════════════════════════════════════════════");
+        console.log("📊 方案C CO2计算详情");
+        console.log("═══════════════════════════════════════════════════════");
+        console.log(`方案类型: 方案C (烟气余热回收)`);
+        console.log(`总负荷: ${s.loadValue.toFixed(2)} kW`);
+        console.log(`热泵回收热量: ${hpRes.recoveredHeat.toFixed(2)} kW`);
+        console.log(`锅炉实际负荷: ${boilerLoadKW.toFixed(2)} kW`);
+        console.log(`锅炉效率: ${s.boilerEff.toFixed(2)}`);
+        console.log("───────────────────────────────────────────────────────");
+        console.log("🔢 碳排放值:");
+        console.log(`  对比能源碳排放值: ${baselineCo2PerHour.toFixed(2)} kg/h`);
+        console.log(`  耦合系统碳排放值: ${currentCo2.toFixed(2)} kg/h`);
+        console.log(`    - 锅炉CO2: ${boilerCo2.toFixed(2)} kg/h`);
+        console.log(`    - 热泵驱动CO2: ${driveCo2.toFixed(2)} kg/h`);
+        console.log(`  减排率: ${co2Reduction.toFixed(2)}%`);
+        console.log("───────────────────────────────────────────────────────");
+        console.log("📐 计算公式:");
+        console.log(`  减排率 = (${baselineCo2PerHour.toFixed(2)} - ${currentCo2.toFixed(2)}) / ${baselineCo2PerHour.toFixed(2)} × 100`);
+        console.log("📐 验证计算:");
+        console.log(`  基准CO2: 总负荷 ${s.loadValue.toFixed(2)} kW / 效率 ${s.boilerEff.toFixed(2)} = ${baseline.inputKW.toFixed(2)} kW输入`);
+        console.log(`  耦合CO2: 锅炉 ${boilerCo2.toFixed(2)} + 热泵驱动 ${driveCo2.toFixed(2)} = ${currentCo2.toFixed(2)} kg/h`);
+        console.log("═══════════════════════════════════════════════════════");
+        
         // #region agent log
         fetch('http://127.0.0.1:7242/ingest/8d595749-f587-4ed5-9402-4cdd0306ec71',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'System.js:216',message:'减排率计算(JS)',data:{baselineCo2PerHour,currentCo2,co2Reduction,formula:`(${baselineCo2PerHour}-${currentCo2})/${baselineCo2PerHour}*100`},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
         // #endregion
@@ -262,7 +315,9 @@ export class System {
             annualSaving, 
             payback, 
             costPerHour: baseline.costPerHour - hourlySaving,
-            co2ReductionRate: co2Reduction, 
+            co2ReductionRate: co2Reduction,
+            baselineCo2: baselineCo2PerHour,  // 🔧 调试：对比能源碳排放值 (kg/h)
+            currentCo2: currentCo2,  // 🔧 调试：耦合系统碳排放值 (kg/h)
             per,
             recommendation, 
             decision, 
@@ -273,7 +328,7 @@ export class System {
         };
     }
 
-    runStandardSimulation(baseline, effectiveFuelPrice) {
+    runStandardSimulation(boiler, baseline, effectiveFuelPrice) {
         const s = this.state;
         const targetT = (s.mode === MODES.STEAM) ? getSatTempFromPressure(s.targetTemp) : s.targetTemp;
         
@@ -321,6 +376,64 @@ export class System {
         const capexDiff = s.loadValue * (s.capexHP - s.capexBase);
         const payback = (annualSaving > 0) ? (capexDiff / annualSaving) : 99;
 
+        // 🔧 修复：计算碳减排率
+        // 基准系统（纯锅炉）：提供总负荷的CO2排放
+        const baselineCo2PerHour = baseline.co2PerHour;
+        // 热泵系统：完全替代锅炉，只产生驱动电力的CO2
+        const hpSystemCo2 = hpCo2;
+        
+        // 🔧 验证：确保基准CO2不为零
+        if (baselineCo2PerHour <= 0) {
+            console.error("❌ 错误：基准CO2为零或负值，无法计算减排率");
+            return { error: "基准CO2计算错误，无法计算减排率" };
+        }
+        
+        // 减排率 = (基准CO2 - 热泵CO2) / 基准CO2 × 100%
+        // 正值表示减排，负值表示增排
+        const co2Reduction = ((baselineCo2PerHour - hpSystemCo2) / baselineCo2PerHour) * 100;
+        
+        // 🔧 调试日志：输出CO2计算详情
+        const fuelData = FUEL_DB[s.fuelType] || FUEL_DB['NATURAL_GAS'];
+        const effectiveCo2Factor = boiler.fuelData.co2Factor; // 使用转换后的CO2因子（已处理单位转换）
+        const userCo2Unit = s.fuelCo2Unit || 'kgCO2/unit';
+        const userCo2Value = s.fuelCo2Value || fuelData.co2Factor;
+        
+        console.log("═══════════════════════════════════════════════════════");
+        console.log("📊 方案A/B CO2计算详情");
+        console.log("═══════════════════════════════════════════════════════");
+        console.log(`方案类型: ${s.topology === TOPOLOGY.PARALLEL ? "方案A (空气源)" : "方案B (余热水源)"}`);
+        console.log(`基准负荷: ${s.loadValue.toFixed(2)} kW`);
+        console.log(`锅炉效率: ${s.boilerEff.toFixed(2)}`);
+        console.log(`基准燃料输入功率: ${baseline.inputKW.toFixed(2)} kW`);
+        console.log(`基准燃料消耗: ${baseline.fuelRate.toFixed(4)} ${fuelData.unit}/h`);
+        console.log(`用户输入CO2因子: ${userCo2Value.toFixed(4)} ${userCo2Unit}`);
+        console.log(`转换后CO2因子: ${effectiveCo2Factor.toFixed(4)} kg/${fuelData.unit}`);
+        console.log("───────────────────────────────────────────────────────");
+        console.log("🔢 碳排放值:");
+        console.log(`  对比能源碳排放值: ${baselineCo2PerHour.toFixed(2)} kg/h`);
+        console.log(`  热泵系统碳排放值: ${hpSystemCo2.toFixed(2)} kg/h`);
+        console.log(`  减排率: ${co2Reduction.toFixed(2)}%`);
+        console.log("───────────────────────────────────────────────────────");
+        console.log("📐 计算公式:");
+        console.log(`  减排率 = (${baselineCo2PerHour.toFixed(2)} - ${hpSystemCo2.toFixed(2)}) / ${baselineCo2PerHour.toFixed(2)} × 100`);
+        console.log("📐 验证计算:");
+        const actualCalValue = boiler.getCalorificValue(); // 使用实际使用的热值（已转换）
+        console.log(`  基准CO2 = ${baseline.inputKW.toFixed(2)} kW × 3.6 / ${actualCalValue.toFixed(1)} MJ/${fuelData.unit} × ${effectiveCo2Factor.toFixed(4)} kg/${fuelData.unit} = ${baselineCo2PerHour.toFixed(2)} kg/h`);
+        console.log(`  热泵CO2 = ${powerInput.toFixed(2)} kW × ${FUEL_DB['ELECTRICITY'].co2Factor.toFixed(4)} kg/kWh = ${hpSystemCo2.toFixed(2)} kg/h`);
+        console.log("═══════════════════════════════════════════════════════");
+        console.log("📋 关键参数验证:");
+        console.log(`  默认热值: ${fuelData.calorificValue.toFixed(1)} MJ/${fuelData.unit}`);
+        console.log(`  实际使用热值: ${actualCalValue.toFixed(1)} MJ/${fuelData.unit}`);
+        console.log(`  默认CO2因子: ${fuelData.co2Factor.toFixed(4)} kg/${fuelData.unit}`);
+        console.log(`  实际使用CO2因子: ${effectiveCo2Factor.toFixed(4)} kg/${fuelData.unit}`);
+        console.log("═══════════════════════════════════════════════════════");
+        
+        // 🔧 验证：检查计算是否合理
+        if (co2Reduction < -50) {
+            console.warn("⚠️ 警告：碳减排率为负且绝对值很大，请检查计算逻辑！");
+            console.warn("   可能原因：电力CO2因子过高，或基准燃料CO2因子设置错误");
+        }
+
         const decision = this._makeDecision(annualSaving, payback);
         let recommendation = decision.winner === 'HP' 
             ? `✅ 建议采用热泵 (预计年省 ${decision.gainWan.toFixed(1)} 万元)` 
@@ -344,7 +457,9 @@ export class System {
             annualSaving, 
             payback, 
             costPerHour: hpCost,
-            co2ReductionRate: ((baseline.co2PerHour - hpCo2) / baseline.co2PerHour) * 100,
+            co2ReductionRate: co2Reduction,  // 🔧 修复：使用明确的计算值
+            baselineCo2: baselineCo2PerHour,  // 🔧 调试：对比能源碳排放值 (kg/h)
+            hpSystemCo2: hpSystemCo2,  // 🔧 调试：热泵系统碳排放值 (kg/h)
             per,
             recommendation, 
             decision, 

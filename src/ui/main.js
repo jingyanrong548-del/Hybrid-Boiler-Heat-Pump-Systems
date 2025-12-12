@@ -146,19 +146,59 @@ const ui = {
 
 let currentReqData = null;
 
+// 🔧 修复：燃料参数缓存机制 - 为每个燃料类型保存用户自定义的参数
+// 格式: { [fuelType]: { fuelCalValue, fuelCalUnit, fuelCo2Value, fuelCo2Unit, boilerEff } }
+const fuelParamsCache = {};
+
+/**
+ * 🔧 修复：更新当前燃料类型的参数缓存
+ * 当用户手动修改参数时调用此函数
+ */
+function updateFuelParamsCache() {
+    const state = store.getState();
+    const fuelType = state.fuelType;
+    if (fuelType) {
+        fuelParamsCache[fuelType] = {
+            fuelCalValue: state.fuelCalValue,
+            fuelCalUnit: state.fuelCalUnit,
+            fuelCo2Value: state.fuelCo2Value,
+            fuelCo2Unit: state.fuelCo2Unit,
+            boilerEff: state.boilerEff
+        };
+    }
+}
+
 // === 辅助函数 ===
 function resetFuelParams(fuelType) {
+    const currentState = store.getState();
+    const currentFuelType = currentState.fuelType;
+    
+    // 🔧 修复：切换前，保存当前燃料类型的自定义参数到缓存
+    if (currentFuelType && currentFuelType !== fuelType) {
+        fuelParamsCache[currentFuelType] = {
+            fuelCalValue: currentState.fuelCalValue,
+            fuelCalUnit: currentState.fuelCalUnit,
+            fuelCo2Value: currentState.fuelCo2Value,
+            fuelCo2Unit: currentState.fuelCo2Unit,
+            boilerEff: currentState.boilerEff
+        };
+        console.log(`💾 已保存 ${currentFuelType} 的自定义参数到缓存`, fuelParamsCache[currentFuelType]);
+    }
+    
+    // 获取目标燃料类型的默认值
     const db = FUEL_DB[fuelType] || FUEL_DB['NATURAL_GAS'];
     let bestCalUnit = 'MJ/kg'; 
     if (db.unit === 'm³') bestCalUnit = 'MJ/m3';
     
+    // 🔧 修复：检查是否有该燃料类型的缓存参数，如果有则使用缓存值，否则使用默认值
+    const cachedParams = fuelParamsCache[fuelType];
     const updates = {
         fuelType: fuelType,
-        fuelCalValue: db.calorificValue, 
-        fuelCalUnit: bestCalUnit,
-        fuelCo2Value: db.co2Factor,     
-        fuelCo2Unit: 'kgCO2/unit',
-        boilerEff: db.defaultEfficiency || (fuelType === 'ELECTRICITY' ? 0.99 : 0.92)
+        fuelCalValue: cachedParams?.fuelCalValue ?? db.calorificValue, 
+        fuelCalUnit: cachedParams?.fuelCalUnit ?? bestCalUnit,
+        fuelCo2Value: cachedParams?.fuelCo2Value ?? db.co2Factor,     
+        fuelCo2Unit: cachedParams?.fuelCo2Unit ?? 'kgCO2/unit',
+        boilerEff: cachedParams?.boilerEff ?? (db.defaultEfficiency || (fuelType === 'ELECTRICITY' ? 0.99 : 0.92))
     };
 
     if (fuelType === 'ELECTRICITY') {
@@ -167,9 +207,13 @@ function resetFuelParams(fuelType) {
     }
 
     store.setState(updates);
-    populateUnitSelect(ui.selUnitCal, CAL_UNIT_OPTIONS, bestCalUnit);
-    populateUnitSelect(ui.selUnitCo2, CO2_UNIT_OPTIONS, 'kgCO2/unit');
-    log(`🔄 燃料切换: ${db.name} (参数已重置)`, 'info');
+    populateUnitSelect(ui.selUnitCal, CAL_UNIT_OPTIONS, updates.fuelCalUnit);
+    populateUnitSelect(ui.selUnitCo2, CO2_UNIT_OPTIONS, updates.fuelCo2Unit);
+    
+    const logMsg = cachedParams 
+        ? `🔄 燃料切换: ${db.name} (已恢复自定义参数)` 
+        : `🔄 燃料切换: ${db.name} (使用默认参数)`;
+    log(logMsg, 'info');
 }
 
 function updatePriceInterlock(fuelType) {
@@ -447,9 +491,28 @@ function bindEvents() {
     bindInput(ui.inpAnnualHours, 'annualHours');
     bindInput(ui.inpExcessAir, 'excessAir');
     
-    bindInput(ui.inpFuelCal, 'fuelCalValue');
-    bindInput(ui.inpFuelCo2, 'fuelCo2Value');
-    bindInput(ui.inpFuelEff, 'boilerEff');
+    // 🔧 修复：绑定燃料参数输入时，同时更新缓存
+    if (ui.inpFuelCal) {
+        ui.inpFuelCal.addEventListener('input', (e) => {
+            const val = parseFloat(e.target.value);
+            store.setState({ fuelCalValue: val });
+            updateFuelParamsCache(); // 更新缓存
+        });
+    }
+    if (ui.inpFuelCo2) {
+        ui.inpFuelCo2.addEventListener('input', (e) => {
+            const val = parseFloat(e.target.value);
+            store.setState({ fuelCo2Value: val });
+            updateFuelParamsCache(); // 更新缓存
+        });
+    }
+    if (ui.inpFuelEff) {
+        ui.inpFuelEff.addEventListener('input', (e) => {
+            const val = parseFloat(e.target.value);
+            store.setState({ boilerEff: val });
+            updateFuelParamsCache(); // 更新缓存
+        });
+    }
     bindInput(ui.inpPefElec, 'pefElec');
     bindInput(ui.inpPerfectionCustom, 'perfectionDegree');
     bindInput(ui.inpCapexHP, 'capexHP');
@@ -476,10 +539,16 @@ function bindEvents() {
             const newFactor = findUnitFactor(newUnit, CAL_UNIT_OPTIONS);
             const ratio = oldFactor / newFactor;
             store.setState({ fuelCalValue: s.fuelCalValue * ratio, fuelCalUnit: newUnit });
+            updateFuelParamsCache(); // 🔧 修复：更新缓存
         });
     }
-    
-    if (ui.selUnitCo2) ui.selUnitCo2.addEventListener('change', (e) => store.setState({ fuelCo2Unit: e.target.value }));
+
+    if (ui.selUnitCo2) {
+        ui.selUnitCo2.addEventListener('change', (e) => {
+            store.setState({ fuelCo2Unit: e.target.value });
+            updateFuelParamsCache(); // 🔧 修复：更新缓存
+        });
+    }
     
     const manualCopInputHandler = (e) => store.setState({ manualCop: parseFloat(e.target.value) });
     const manualCopChangeHandler = (e) => {
@@ -790,13 +859,16 @@ async function runPythonSchemeC(state) {
                 o2: o2VolPercent.toFixed(1)
             };
             
-            // 计算烟气质量流量（kg/h）
+            // 🔧 计算烟气质量流量（kg/h）
+            // 体积流量 sourcePot.flowVol 是标准状态 (0°C, 101.325 kPa) 下的体积
+            // 需要根据实际温度进行密度修正
             // 烟气密度：标准状态下约1.2-1.3 kg/m3，考虑温度修正
             // 简化：使用平均密度 1.25 kg/m3（在100-200°C范围内）
-            const avgFlueTemp = (state.flueIn + state.flueOut) / 2;  // 使用目标排烟温度
-            const densityAtSTP = 1.293;  // 标准状态空气密度 kg/m3
-            const tempCorrection = 273.15 / (avgFlueTemp + 273.15);  // 温度修正
+            const avgFlueTemp = (state.flueIn + state.flueOut) / 2;  // 使用初始排烟和目标排烟的平均温度
+            const densityAtSTP = 1.293;  // 标准状态 (0°C, 101.325 kPa) 空气密度 kg/m3
+            const tempCorrection = 273.15 / (avgFlueTemp + 273.15);  // 温度修正（理想气体状态方程）
             const flueGasDensity = densityAtSTP * tempCorrection * 1.05;  // 考虑CO2等重气体，约1.05倍
+            // 🔧 质量流量 = 标准状态体积流量 × 实际工况密度
             flueGasMassFlow = sourcePot.flowVol * flueGasDensity;
         }
     }
@@ -1214,7 +1286,37 @@ function handleSimulationResult(res, state) {
                 ui.resPayback.innerText = res.payback.toFixed(1);
             }
         }
-        if (ui.resCo2Red) ui.resCo2Red.innerText = res.co2ReductionRate.toFixed(1);
+        // 🔧 修复：显示碳减排率，并添加tooltip显示计算过程
+        if (ui.resCo2Red) {
+            const co2Red = res.co2ReductionRate;
+            ui.resCo2Red.innerText = co2Red.toFixed(1);
+            
+            // 🔧 调试：构建tooltip显示碳排放值详情
+            let tooltipText = `碳减排率: ${co2Red.toFixed(2)}%\n\n`;
+            
+            // 方案A/B：显示对比能源和热泵碳排放值
+            if (res.baselineCo2 !== undefined && res.hpSystemCo2 !== undefined) {
+                tooltipText += `对比能源碳排放: ${res.baselineCo2.toFixed(2)} kg/h\n`;
+                tooltipText += `热泵系统碳排放: ${res.hpSystemCo2.toFixed(2)} kg/h\n`;
+                tooltipText += `计算公式: (${res.baselineCo2.toFixed(2)} - ${res.hpSystemCo2.toFixed(2)}) / ${res.baselineCo2.toFixed(2)} × 100%`;
+            }
+            // 方案C：显示对比能源和耦合系统碳排放值
+            else if (res.baselineCo2 !== undefined && res.currentCo2 !== undefined) {
+                tooltipText += `对比能源碳排放: ${res.baselineCo2.toFixed(2)} kg/h\n`;
+                tooltipText += `耦合系统碳排放: ${res.currentCo2.toFixed(2)} kg/h\n`;
+                tooltipText += `计算公式: (${res.baselineCo2.toFixed(2)} - ${res.currentCo2.toFixed(2)}) / ${res.baselineCo2.toFixed(2)} × 100%`;
+            }
+            
+            // 如果值为负或异常，添加警告
+            if (co2Red < -10 || Math.abs(co2Red) > 200) {
+                tooltipText += `\n\n⚠️ 警告：如果为负值，说明热泵/耦合系统CO2高于基准CO2\n请检查对比燃料类型和CO2因子设置`;
+                ui.resCo2Red.style.cursor = 'help';
+            } else {
+                ui.resCo2Red.style.cursor = 'default';
+            }
+            
+            ui.resCo2Red.title = tooltipText;
+        }
     }
 
     // 5. 系统产能更新

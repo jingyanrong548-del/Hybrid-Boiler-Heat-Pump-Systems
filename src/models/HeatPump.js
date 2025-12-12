@@ -12,6 +12,8 @@ export class HeatPump {
     /**
      * 执行热泵物理仿真 (Flow-Driven Mode)
      * @param {Object} sourcePotential - 热源侧能力 { total, flueIn, flueOut, flowVol, ... }
+     *   - flowVol: 标准状态 (0°C, 101.325 kPa) 下的烟气体积流量 (m3/h)
+     *   - Cp_flue: 体积比热容 (kWh/(m3·K))，已考虑实际工况的平均效应
      * @param {Object} thermalDemand - 热汇侧需求 { loadIn, massFlow, targetTemp }
      */
     simulate(sourcePotential, thermalDemand) {
@@ -112,8 +114,9 @@ export class HeatPump {
             actualFlueOut = targetFlueOut;
         } else {
             // 热源有富余 (Sink Limited) -> 反算排烟温度
-            // Q_actual = Flow_gas * Cp * (T_in - T_out_actual)
-            // => T_out_actual = T_in - Q_actual / (Flow * Cp)
+            // 🔧 显热计算公式: Q_actual = Flow_gas_STP * Cp_vol * (T_in - T_out_actual)
+            // 其中: Flow_gas_STP 是标准状态下的体积流量，Cp_vol 已考虑实际工况
+            // => T_out_actual = T_in - Q_actual / (Flow_STP * Cp_vol)
             const deltaT = qEvapActual / (flowVol * Cp_flue);
             actualFlueOut = targetFlueIn - deltaT;
             

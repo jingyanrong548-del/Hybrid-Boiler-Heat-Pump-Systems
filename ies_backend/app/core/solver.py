@@ -10,8 +10,10 @@ class SchemeCSolver:
         self.max_iter = max_iter
 
     def calculate_flue_heat_release(self, t_in, t_out, flow_vol, fuel_type, excess_air=1.2):
-        # 1. 显热计算
-        cp_vol_mj = 0.00038 * 3600 
+        # 🔧 显热计算
+        # flow_vol: 标准状态 (0°C, 101.325 kPa) 下的烟气体积流量 (m3/h)
+        # cp_vol_mj: 体积比热容 (MJ/(m3·K))，已考虑实际工况（100-200°C范围）的平均效应
+        cp_vol_mj = 0.00038 * 3600  # 0.00038 kWh/(m3·K) = 1.368 MJ/(m3·K)
         sensible_kw = (flow_vol * cp_vol_mj * (t_in - t_out)) / 3600.0
         
         # 2. 潜热计算

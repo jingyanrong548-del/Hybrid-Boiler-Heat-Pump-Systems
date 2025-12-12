@@ -10,6 +10,7 @@ export class Boiler {
         
         // 1. 加载默认燃料数据
         const defaultData = FUEL_DB[config.fuelType] || FUEL_DB['NATURAL_GAS'];
+        const fuelUnit = defaultData.unit; // 保存燃料单位，用于日志输出
         
         // 2. 创建副本以避免污染原始常量
         this.fuelData = { ...defaultData };
@@ -20,8 +21,51 @@ export class Boiler {
             this.fuelData.calorificValue = config.fuelCalValue;
         }
         
+        // 🔧 修复：CO2因子单位转换
+        // 如果用户输入的是 kg/kWh 单位，需要转换为 kg/unit
+        // 或者，如果输入值明显是按kWh当量的值（对于天然气，0.2左右），也需要转换
         if (config.fuelCo2Value !== undefined && !isNaN(config.fuelCo2Value)) {
-            this.fuelData.co2Factor = config.fuelCo2Value;
+            let co2Factor = config.fuelCo2Value;
+            const fuelCo2Unit = config.fuelCo2Unit || 'kgCO2/unit';
+            const calorificValue = this.fuelData.calorificValue; // MJ/unit
+            const defaultCo2Factor = defaultData.co2Factor; // 默认CO2因子 (kg/unit)
+            
+            // 判断是否需要转换：
+            // 1. 单位明确是 kg/kWh
+            // 2. 或者：单位是 kg/unit，但输入值明显是按kWh当量的值（小于默认值的1/5，且小于1.0）
+            const isUnitKWh = fuelCo2Unit === 'kgCO2/kWh';
+            const isLikelyKWhValue = !isUnitKWh && 
+                                     co2Factor < 1.0 && 
+                                     co2Factor < defaultCo2Factor * 0.3; // 如果输入值远小于默认值，很可能是kWh当量
+            
+            if (isUnitKWh || isLikelyKWhValue) {
+                // 转换公式：co2Factor_kg_per_unit = co2Factor_kg_per_kWh × (calorificValue_MJ_per_unit / 3.6)
+                // 因为 1 kWh = 3.6 MJ，所以需要乘以 (calorificValue / 3.6)
+                const originalValue = co2Factor;
+                co2Factor = co2Factor * (calorificValue / 3.6);
+                
+                const reason = isUnitKWh ? "单位是kg/kWh" : "检测到输入值可能是kWh当量";
+                console.log(`🔧 CO2因子单位转换:`, {
+                    "原始值": originalValue,
+                    "原始单位": fuelCo2Unit,
+                    "转换原因": reason,
+                    "默认CO2因子": defaultCo2Factor.toFixed(4) + " kg/" + fuelUnit,
+                    "热值": calorificValue + " MJ/" + fuelUnit,
+                    "转换公式": `${originalValue} kg/kWh × (${calorificValue} MJ/${fuelUnit} / 3.6 MJ/kWh)`,
+                    "转换后值": co2Factor.toFixed(4),
+                    "转换后单位": "kg/" + fuelUnit
+                });
+            } else {
+                // 单位已经是 kg/unit，且值合理，直接使用
+                console.log(`🔧 CO2因子使用:`, {
+                    "值": co2Factor,
+                    "单位": fuelCo2Unit,
+                    "燃料单位": fuelUnit,
+                    "默认值": defaultCo2Factor.toFixed(4) + " kg/" + fuelUnit
+                });
+            }
+            
+            this.fuelData.co2Factor = co2Factor;
         }
     }
 
@@ -80,8 +124,9 @@ export class Boiler {
             alpha
         );
 
-        // 实际工况下的烟气体积流量 (m3/h)
-        // 注意: theoreticalGasFactor 是 m3_gas / m3_fuel
+        // 🔧 烟气体积流量计算 (m3/h)
+        // 参考状态：标准状态 (0°C, 101.325 kPa, STP)
+        // 注意: theoreticalGasFactor 是标准状态下 m3_gas / m3_fuel
         // 我们需要先算出 m3_fuel / h (即 fuelRate，但这里为了解耦重新计算)
         // 这里的 fuelRate 必须基于体积(m3)或质量(kg)，取决于 fuelData.unit
         // 为简化模型，我们沿用 inputKW * Factor 的工程估算 (假设 Factor 已经归一化到 kW 输入)
@@ -92,8 +137,12 @@ export class Boiler {
         
         const inputEnergyMJ = inputKW * 3.6;
         const fuelRate = inputEnergyMJ / this.getCalorificValue();
+        // 🔧 体积流量：标准状态 (0°C, 101.325 kPa) 下的体积
         const flueGasVol = fuelRate * actualFlueFactor; 
 
+        // 🔧 体积比热容：0.00038 kWh/(m3·K) 是标准状态下烟气的平均体积比热容
+        // 由于体积流量是标准状态的，而显热计算需要实际工况，这里使用工程近似值
+        // 该值已考虑了实际工况（100-200°C范围）的平均效应
         const Cp_flue = 0.00038; // 简化比热容 (kWh/m3K)
 
         // 2. 显热计算 (Sensible)
