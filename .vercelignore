@@ -1,0 +1,12 @@
+# Vercel 忽略文件
+ies_backend/venv/
+ies_backend/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+node_modules/
+dist/
+.env
+.env.local
+.DS_Store

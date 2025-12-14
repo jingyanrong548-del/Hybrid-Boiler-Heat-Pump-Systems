@@ -1,7 +1,7 @@
 // src/core/api.js
 // 根据环境自动选择 API 地址
 // 开发环境：使用本地后端 (http://localhost:8000)
-// 生产环境：使用远程云服务
+// 生产环境：使用 Vercel API 路由（相对路径）
 
 // 判断是否为开发环境：检查是否在 localhost 或 127.0.0.1 运行
 const isDevelopment = typeof window !== 'undefined' && 
@@ -11,13 +11,13 @@ const isDevelopment = typeof window !== 'undefined' &&
 
 const API_BASE = isDevelopment
     ? "http://localhost:8000"  // 开发环境：本地后端
-    : "https://hybrid-boiler-heat-pump-systems.onrender.com";  // 生产环境：远程云服务
+    : "/api";  // 生产环境：使用 Vercel API 路由（相对路径）
 
 // 在控制台输出当前使用的 API 地址（方便调试）
 if (isDevelopment) {
     console.log("🔧 开发模式：使用本地后端", API_BASE);
 } else {
-    console.log("🌐 生产模式：使用远程云服务", API_BASE);
+    console.log("🌐 生产模式：使用 Vercel API", API_BASE);
 }
 
 /**

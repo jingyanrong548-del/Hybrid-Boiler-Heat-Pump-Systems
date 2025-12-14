@@ -10,6 +10,9 @@
     "predeploy": "npm run build",
     "deploy": "gh-pages -d dist"
   },
+  "engines": {
+    "node": ">=18.x"
+  },
   "devDependencies": {
     "autoprefixer": "^10.4.22",
     "gh-pages": "^6.3.0",

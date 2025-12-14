@@ -1,0 +1,7 @@
+# Vercel Python Serverless Functions 依赖
+# 注意：Vercel 会自动安装这些依赖
+# 只包含后端核心逻辑所需的依赖（pydantic 用于数据验证）
+
+pydantic==2.12.5
+pydantic_core==2.41.5
+typing_extensions==4.15.0
