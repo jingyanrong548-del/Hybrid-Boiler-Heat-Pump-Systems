@@ -1304,8 +1304,14 @@ async function runSimulation() {
                 errorMsg.includes("Failed to fetch") ||
                 errorMsg.includes("Load failed") ||
                 errorMsg.includes("network")) {
-                log(`❌ 后端连接失败: ${errorMsg}`, 'error');
-                log(`💡 提示: 请启动本地后端服务器或使用生产环境版本`, 'warning');
+                // 将多行错误消息拆分为多行日志
+                const errorLines = errorMsg.split('\n');
+                errorLines.forEach(line => {
+                    if (line.trim()) {
+                        log(line.trim(), 'error');
+                    }
+                });
+                log(`💡 提示: 在本地开发时，请启动后端: cd ies_backend && python main.py`, 'warning');
                 ui.resCop.innerText = "Err";
                 return;
             }

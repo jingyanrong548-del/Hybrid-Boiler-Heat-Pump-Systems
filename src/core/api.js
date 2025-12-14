@@ -71,7 +71,10 @@ export async function fetchSchemeC(payload) {
 
                 if (!fallbackResponse.ok) {
                     const errText = await fallbackResponse.text();
-                    throw new Error(`Server Error: ${errText}`);
+                    // 保存响应状态码以便后续错误处理
+                    const error = new Error(`Server Error: ${errText}`);
+                    error.response = { status: fallbackResponse.status };
+                    throw error;
                 }
 
                 const data = await fallbackResponse.json();
@@ -79,15 +82,29 @@ export async function fetchSchemeC(payload) {
                 return data;
             } catch (fallbackError) {
                 // 回退也失败，提供详细错误信息
-                const friendlyError = new Error(
-                    `无法连接到后端服务器。\n\n` +
-                    `尝试的连接：\n` +
-                    `1. ${primaryUrl} - 失败\n` +
-                    `2. ${fallbackUrl} - 失败\n\n` +
-                    `请确保：\n` +
-                    `- 本地后端正在运行: cd ies_backend && python main.py\n` +
-                    `- 或者使用已部署的生产环境版本`
-                );
+                const is404 = fallbackError.message.includes('404') || 
+                             (fallbackError.response && fallbackError.response.status === 404);
+                
+                let errorMessage = `无法连接到后端服务器。\n\n`;
+                errorMessage += `尝试的连接：\n`;
+                errorMessage += `1. ${primaryUrl} - 失败（本地后端未运行）\n`;
+                
+                if (is404) {
+                    errorMessage += `2. ${fallbackUrl} - 失败（404，该路径仅在 Vercel 部署环境中可用）\n\n`;
+                    errorMessage += `💡 解决方案：\n`;
+                    errorMessage += `在本地开发环境中，请启动本地后端服务器：\n`;
+                    errorMessage += `  cd ies_backend\n`;
+                    errorMessage += `  python main.py\n\n`;
+                    errorMessage += `或者访问已部署的生产环境版本：\n`;
+                    errorMessage += `  https://your-app.vercel.app`;
+                } else {
+                    errorMessage += `2. ${fallbackUrl} - 失败\n\n`;
+                    errorMessage += `请确保：\n`;
+                    errorMessage += `- 本地后端正在运行: cd ies_backend && python main.py\n`;
+                    errorMessage += `- 或者使用已部署的生产环境版本`;
+                }
+                
+                const friendlyError = new Error(errorMessage);
                 friendlyError.name = 'ConnectionError';
                 console.error("❌ API 通信失败（所有尝试均失败）:", friendlyError);
                 throw friendlyError;
