@@ -1296,8 +1296,22 @@ async function runSimulation() {
             await runPythonSchemeC(state);
         } catch (err) {
             const errorMsg = err.message || "";
+            const errorName = err.name || "";
+            
+            // 🔧 改进：识别连接错误
+            if (errorName === 'ConnectionError' || 
+                errorMsg.includes("无法连接到") || 
+                errorMsg.includes("Failed to fetch") ||
+                errorMsg.includes("Load failed") ||
+                errorMsg.includes("network")) {
+                log(`❌ 后端连接失败: ${errorMsg}`, 'error');
+                log(`💡 提示: 请启动本地后端服务器或使用生产环境版本`, 'warning');
+                ui.resCop.innerText = "Err";
+                return;
+            }
+            
             // 智能降级: 如果是热源不足导致的无法收敛，切回 JS 模式
-            if (errorMsg.includes("无法收敛") || errorMsg.includes("热源不足") || errorMsg.includes("Failed")) {
+            if (errorMsg.includes("无法收敛") || errorMsg.includes("热源不足")) {
                 runLocalFallback("热源不足以支撑全额预热目标");
             } else {
                 log(`❌ 系统错误: ${errorMsg}`, 'error');
