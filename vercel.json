@@ -4,11 +4,6 @@
   "outputDirectory": "dist",
   "framework": "vite",
   "installCommand": "npm install",
-  "functions": {
-    "api/**/*.py": {
-      "runtime": "python3.9"
-    }
-  },
   "rewrites": [
     {
       "source": "/api/(.*)",
