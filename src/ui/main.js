@@ -778,7 +778,9 @@ store.subscribe((state) => {
             ui.lblTarget.innerText = "目标饱和蒸汽压力";
             ui.unitTarget.innerText = "MPa(a)";
             ui.boxSteamInfo.classList.remove('hidden');
-            ui.resSatTemp.innerText = `${getSatTempFromPressure(targetTemp)} °C`;
+            // 🔧 修复：使用实际大气压力计算饱和温度
+            const atmPressure = calculateAtmosphericPressure(altitude || 0);
+            ui.resSatTemp.innerText = `${getSatTempFromPressure(targetTemp, atmPressure)} °C`;
             document.getElementById('label-load-in-std').innerText = "热汇入口温度 (补水)";
         } else {
             ui.lblTarget.innerText = "目标供水温度 (Out)";
