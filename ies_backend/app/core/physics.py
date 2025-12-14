@@ -2,7 +2,30 @@ import math
 
 # === 移植自 src/core/physics.js ===
 
-def get_sat_temp_from_pressure(pressure_mpa: float) -> float:
+def calculate_atmospheric_pressure(altitude_m: float) -> float:
+    """
+    根据海拔计算实际大气压力
+    使用国际标准大气模型 (ISA)
+    对应 JS: calculateAtmosphericPressure
+    """
+    # 海平面标准大气压: 101.325 kPa
+    P0 = 101.325  # kPa
+    T0 = 288.15  # K (15°C)
+    L = 0.0065  # K/m (温度递减率)
+    g = 9.80665  # m/s² (重力加速度)
+    M = 0.0289644  # kg/mol (干空气摩尔质量)
+    R = 8.31447  # J/(mol·K) (通用气体常数)
+    
+    if altitude_m < 0:
+        altitude_m = 0  # 海平面以下按海平面处理
+    
+    # 标准大气模型: P = P0 * (1 - L*h/T0)^(g*M/(R*L))
+    exponent = (g * M) / (R * L)
+    pressure = P0 * pow(1 - (L * altitude_m) / T0, exponent)
+    
+    return round(pressure, 3)
+
+def get_sat_temp_from_pressure(pressure_mpa: float, atmospheric_pressure_kpa: float = 101.325) -> float:
     """
     根据绝对压力计算饱和温度 (R134a/Water 简化拟合)
     对应 JS: getSatTempFromPressure
@@ -10,8 +33,14 @@ def get_sat_temp_from_pressure(pressure_mpa: float) -> float:
     if pressure_mpa <= 0:
         return 100.0
     
+    # 如果输入的是表压，需要加上大气压得到绝对压力
+    absolute_pressure_mpa = pressure_mpa
+    if pressure_mpa < 0.5:
+        # 可能是表压，转换为绝对压力
+        absolute_pressure_mpa = pressure_mpa + (atmospheric_pressure_kpa / 1000)
+    
     # Antoine Equation approximation
-    p_mmhg = pressure_mpa * 7500.62
+    p_mmhg = absolute_pressure_mpa * 7500.62
     A, B, C = 8.07131, 1730.63, 233.426
     
     # 注意：Python 的 log10 在 math 库里
@@ -87,7 +116,8 @@ def calculate_water_condensation(flue_in_temp: float, flue_out_temp: float,
     
     # 标准状态参数
     T_STP = 273.15  # 0°C = 273.15 K
-    P_STP = 101.325  # 标准大气压 (kPa)
+    # 注意：P_STP 应该使用实际大气压力，但这里保持兼容性
+    P_STP = 101.325  # 标准大气压 (kPa)，实际计算中应使用实际大气压
     R_H2O = 0.4615  # 水蒸气气体常数 (kJ/(kg·K))
     
     # 1. 计算初始水蒸气质量

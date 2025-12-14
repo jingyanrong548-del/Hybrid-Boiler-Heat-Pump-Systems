@@ -30,3 +30,6 @@ class SchemeCRequest(BaseModel):
     
     # 🔧 新增：过量空气系数（用于计算水分析出）
     excess_air: float = 1.2       # 过量空气系数，默认1.2
+    
+    # 🔧 新增：海拔高度（用于计算实际大气压力）
+    altitude: float = 0.0         # 海拔高度 (米)，默认海平面

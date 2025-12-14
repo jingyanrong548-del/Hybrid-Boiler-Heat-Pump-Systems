@@ -2,7 +2,7 @@
 import Chart from 'chart.js/auto';
 import { calculateCOP } from '../core/cycles.js';
 import { MODES, TOPOLOGY, RECOVERY_TYPES, LIMITS, STRATEGIES } from '../core/constants.js';
-import { getSatTempFromPressure } from '../core/physics.js';
+import { getSatTempFromPressure, calculateAtmosphericPressure } from '../core/physics.js';
 
 let chartInstance = null;
 
@@ -22,8 +22,11 @@ export function updatePerformanceChart(state, actualResult = null) {
 
     const { 
         topology, mode, steamStrategy, recoveryType, perfectionDegree, 
-        targetTemp, sourceTemp, sourceOut, loadOut, isManualCop, manualCop
+        targetTemp, sourceTemp, sourceOut, loadOut, isManualCop, manualCop, altitude
     } = state;
+    
+    // 计算实际大气压力
+    const atmPressure = calculateAtmosphericPressure(altitude || 0);
 
     let labels = [];
     let dataCOP = [];
@@ -39,7 +42,7 @@ export function updatePerformanceChart(state, actualResult = null) {
         // - 蒸汽模式: 目标是饱和温度 (由 targetTemp 压力计算)
         // - 热水模式: 目标是 loadOut (预热/供水出口)
         if (mode === MODES.STEAM) {
-            simulationTargetTemp = getSatTempFromPressure(targetTemp);
+            simulationTargetTemp = getSatTempFromPressure(targetTemp, atmPressure);
         } else {
             simulationTargetTemp = loadOut; 
         }
@@ -48,7 +51,7 @@ export function updatePerformanceChart(state, actualResult = null) {
         // - 蒸汽模式: 目标是饱和温度
         // - 热水模式: 目标是 targetTemp
         if (mode === MODES.STEAM) {
-            simulationTargetTemp = getSatTempFromPressure(targetTemp);
+            simulationTargetTemp = getSatTempFromPressure(targetTemp, atmPressure);
         } else {
             simulationTargetTemp = targetTemp;
         }
@@ -154,7 +157,7 @@ export function updatePerformanceChart(state, actualResult = null) {
                 for (let p = 0.1; p <= 1.2; p += 0.1) {
                     const val = parseFloat(p.toFixed(1));
                     labels.push(val);
-                    const tSat = getSatTempFromPressure(val);
+                    const tSat = getSatTempFromPressure(val, atmPressure);
                     
                     // 动态计算该压力下的冷凝温度
                     const tCondDynamic = tSat + 8.0; // 蒸汽工况通常余量稍大

@@ -3,13 +3,24 @@ import { LIMITS, UNIT_CONVERTERS } from './constants.js';
 
 /**
  * 根据绝对压力计算饱和温度 (R134a/Water 简化拟合)
- * @param {number} pressureMPa - 绝对压力 (MPa)
+ * @param {number} pressureMPa - 绝对压力 (MPa, 表压 + 大气压)
+ * @param {number} atmosphericPressureKPa - 实际大气压力 (kPa, 可选，默认101.325)
  * @returns {number} 饱和温度 (°C)
  */
-export function getSatTempFromPressure(pressureMPa) {
+export function getSatTempFromPressure(pressureMPa, atmosphericPressureKPa = 101.325) {
     if (pressureMPa <= 0) return 100;
+    
+    // 如果输入的是表压，需要加上大气压得到绝对压力
+    // 假设 pressureMPa 已经是绝对压力（表压 + 大气压）
+    // 但为了兼容性，如果 pressureMPa < 0.5 MPa，可能是表压，需要加上大气压
+    let absolutePressureMPa = pressureMPa;
+    if (pressureMPa < 0.5) {
+        // 可能是表压，转换为绝对压力
+        absolutePressureMPa = pressureMPa + (atmosphericPressureKPa / 1000);
+    }
+    
     // Antoine Equation approximation for engineering range
-    const P_mmHg = pressureMPa * 7500.62;
+    const P_mmHg = absolutePressureMPa * 7500.62;
     const A = 8.07131, B = 1730.63, C = 233.426;
     const val = B / (A - Math.log10(P_mmHg)) - C;
     return parseFloat(val.toFixed(1));
@@ -57,6 +68,31 @@ export function normalizeCalorific(val, unit, converterMap) {
 }
 
 // === [v9.1 新增] 高级物理修正函数 ===
+
+/**
+ * 根据海拔计算实际大气压力
+ * 使用国际标准大气模型 (ISA)
+ * @param {number} altitudeM - 海拔高度 (米, 海平面为0)
+ * @returns {number} 实际大气压力 (kPa)
+ */
+export function calculateAtmosphericPressure(altitudeM) {
+    // 海平面标准大气压: 101.325 kPa
+    const P0 = 101.325; // kPa
+    const T0 = 288.15; // K (15°C)
+    const L = 0.0065; // K/m (温度递减率)
+    const g = 9.80665; // m/s² (重力加速度)
+    const M = 0.0289644; // kg/mol (干空气摩尔质量)
+    const R = 8.31447; // J/(mol·K) (通用气体常数)
+    
+    // 标准大气模型: P = P0 * (1 - L*h/T0)^(g*M/(R*L))
+    // 对于低海拔地区 (h < 11000m)，使用此公式
+    if (altitudeM < 0) altitudeM = 0; // 海平面以下按海平面处理
+    
+    const exponent = (g * M) / (R * L);
+    const pressure = P0 * Math.pow(1 - (L * altitudeM) / T0, exponent);
+    
+    return parseFloat(pressure.toFixed(3));
+}
 
 /**
  * 计算实际烟气生成量 (考虑过量空气)

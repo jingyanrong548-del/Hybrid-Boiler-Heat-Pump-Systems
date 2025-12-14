@@ -7,7 +7,7 @@ import { fetchSchemeC } from '../core/api.js'; // 用于呼叫 Python
 import { updatePerformanceChart } from './charts.js';
 import { renderSystemDiagram } from './diagram.js'; 
 import { MODES, TOPOLOGY, STRATEGIES, FUEL_DB, RECOVERY_TYPES } from '../core/constants.js';
-import { getSatTempFromPressure, convertSteamTonsToKW, calculateWaterCondensation, calculateAdjustedDewPoint } from '../core/physics.js';
+import { getSatTempFromPressure, convertSteamTonsToKW, calculateWaterCondensation, calculateAdjustedDewPoint, calculateAtmosphericPressure } from '../core/physics.js';
 import { calculateCOP } from '../core/cycles.js';
 
 // === Unit Options ===
@@ -101,6 +101,8 @@ const ui = {
     selUnitCo2: document.getElementById('sel-unit-co2'),
     inpFuelEff: document.getElementById('inp-fuel-eff'),
     inpAnnualHours: document.getElementById('input-annual-hours'),
+    inpAltitude: document.getElementById('inp-altitude'),
+    valAtmosphericPressure: document.getElementById('val-atmospheric-pressure'),
     
     inpLoad: document.getElementById('input-load'),
     inpLoadTon: document.getElementById('input-load-ton'),
@@ -556,6 +558,25 @@ function bindEvents() {
     bindInput(ui.inpPerfectionCustom, 'perfectionDegree');
     bindInput(ui.inpCapexHP, 'capexHP');
     bindInput(ui.inpCapexBase, 'capexBase');
+    bindInput(ui.inpAltitude, 'altitude');
+    
+    // 海拔输入时实时更新大气压力显示
+    if (ui.inpAltitude) {
+        ui.inpAltitude.addEventListener('input', (e) => {
+            const altitude = parseFloat(e.target.value) || 0;
+            store.setState({ altitude });
+            const atmPressure = calculateAtmosphericPressure(altitude);
+            if (ui.valAtmosphericPressure) {
+                ui.valAtmosphericPressure.innerText = atmPressure.toFixed(3);
+            }
+            // 触发UI更新以重新计算饱和温度
+            const s = store.getState();
+            if (s.mode === MODES.STEAM && ui.inpTarget) {
+                const event = new Event('input', { bubbles: true });
+                ui.inpTarget.dispatchEvent(event);
+            }
+        });
+    }
     
     if (ui.selPerfection) {
         ui.selPerfection.addEventListener('change', (e) => {
@@ -622,8 +643,14 @@ store.subscribe((state) => {
     const { 
         topology, mode, targetTemp, sourceTemp, sourceOut, loadInStd, recoveryType, loadUnit, loadValue, loadValueTons, 
         fuelCalValue, fuelCalUnit, fuelCo2Value, fuelCo2Unit, perfectionDegree, isManualCop, manualCop,
-        fuelType, elecPrice, fuelPrice
+        fuelType, elecPrice, fuelPrice, altitude
     } = state;
+    
+    // 更新大气压力显示
+    if (ui.valAtmosphericPressure && altitude !== undefined) {
+        const atmPressure = calculateAtmosphericPressure(altitude || 0);
+        ui.valAtmosphericPressure.innerText = atmPressure.toFixed(3);
+    }
 
     if (ui.topo.value !== topology) ui.topo.value = topology;
     if (ui.selRecType && ui.selRecType.value !== recoveryType) ui.selRecType.value = recoveryType;
@@ -717,7 +744,9 @@ store.subscribe((state) => {
              ui.boxTargetStd.classList.remove('hidden'); 
              ui.lblTarget.innerText = "系统饱和蒸汽压力 (Target)";
              ui.unitTarget.innerText = "MPa(a)";
-             ui.resSatTemp.innerText = `${getSatTempFromPressure(targetTemp)} °C`;
+             const altitude = store.getState().altitude || 0;
+             const atmPressure = calculateAtmosphericPressure(altitude);
+             ui.resSatTemp.innerText = `${getSatTempFromPressure(targetTemp, atmPressure)} °C`;
              ui.boxSteamInfo.classList.remove('hidden');
              ui.lblLoadIn.innerText = "锅炉补水温度 (In)";
              ui.lblLoadOut.innerText = "热泵预热目标温度 (HP Out)"; 
@@ -945,7 +974,9 @@ async function runPythonSchemeC(state) {
         is_manual_cop: state.isManualCop,
         manual_cop: state.manualCop,
         // 🔧 新增：传递过量空气系数（用于计算水分析出）
-        excess_air: state.excessAir || 1.2
+        excess_air: state.excessAir || 1.2,
+        // 🔧 新增：传递海拔高度（用于计算实际大气压力）
+        altitude: state.altitude || 0
     };
     
     log(`📡 呼叫 Python: 流量=${flow_kg_h.toFixed(0)}kg/h, 烟气=${sourcePot.flowVol.toFixed(0)}m3/h`);
@@ -1303,7 +1334,9 @@ function handleSimulationResult(res, state) {
             // 计算目标温度下的理论COP
             let simulationTargetTemp;
             if (state.mode === MODES.STEAM) {
-                simulationTargetTemp = getSatTempFromPressure(state.targetTemp);
+                const altitude = state.altitude || 0;
+                const atmPressure = calculateAtmosphericPressure(altitude);
+                simulationTargetTemp = getSatTempFromPressure(state.targetTemp, atmPressure);
                 if (state.steamStrategy === STRATEGIES.PREHEAT && simulationTargetTemp > 98.0) {
                     simulationTargetTemp = 98.0;
                 }
@@ -1455,7 +1488,11 @@ function handleSimulationResult(res, state) {
         if (res.reqData.sourceOut) displaySourceOut = res.reqData.sourceOut;
     } else {
         displaySupplyT = (state.mode === MODES.STEAM) 
-            ? getSatTempFromPressure(state.targetTemp) 
+            ? (() => {
+                const altitude = state.altitude || 0;
+                const atmPressure = calculateAtmosphericPressure(altitude);
+                return getSatTempFromPressure(state.targetTemp, atmPressure);
+              })() 
             : state.targetTemp;
         displaySourceOut = state.sourceOut;
     }

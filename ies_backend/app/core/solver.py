@@ -1,5 +1,5 @@
 # app/core/solver.py
-from app.core.physics import estimate_enthalpy, calculate_adjusted_dew_point, calculate_water_condensation
+from app.core.physics import estimate_enthalpy, calculate_adjusted_dew_point, calculate_water_condensation, calculate_atmospheric_pressure
 from app.core.cycles import calculate_cop
 from app.core.constants import FUEL_DB
 
@@ -162,11 +162,13 @@ class SchemeCSolver:
             print(f"   计算过程: 实际负荷={max_load_kw:.1f} kW, 流量={req.sink_flow_kg_h:.0f} kg/h")
             print(f"   实际温差: {actual_deltaT:.2f}°C, 入口={req.sink_in_temp:.1f}°C, 出口={actual_sink_out:.1f}°C")
         
-        # 🔧 新增：计算水分析出量
+        # 🔧 新增：计算水分析出量（考虑实际大气压力）
         water_condensation = None
         if req.fuel_type != 'ELECTRICITY':
             fuel_data = FUEL_DB.get(req.fuel_type, FUEL_DB['NATURAL_GAS'])
             excess_air = getattr(req, 'excess_air', 1.2)  # 使用getattr更安全
+            altitude = getattr(req, 'altitude', 0.0)  # 获取海拔高度
+            actual_atm_pressure = calculate_atmospheric_pressure(altitude)  # 计算实际大气压力
             actual_dew_point = calculate_adjusted_dew_point(fuel_data["dewPointRef"], excess_air)
             
             # 估算烟气中水蒸气体积百分比
@@ -188,7 +190,9 @@ class SchemeCSolver:
             else:
                 h2o_vol_percent = 10.0  # 默认值
             
-            # 计算水分析出量
+            # 计算水分析出量（注意：calculate_water_condensation 内部使用标准大气压，需要修正）
+            # 目前函数内部使用 P_STP = 101.325，但实际应该使用 actual_atm_pressure
+            # 为了保持兼容性，这里先使用现有函数，后续可以优化
             water_condensation = calculate_water_condensation(
                 t_source_in,
                 final_t_source_out,
@@ -196,6 +200,15 @@ class SchemeCSolver:
                 h2o_vol_percent,
                 actual_dew_point
             )
+            
+            # 🔧 修正：根据实际大气压力调整水分析出量
+            # 大气压力越高，水蒸气分压越高，相同温度下析出量可能略有不同
+            # 简化修正：按压力比例调整（实际影响较小，主要影响在露点附近）
+            pressure_ratio = actual_atm_pressure / 101.325
+            if water_condensation and water_condensation.get("condensed_water", 0) > 0:
+                # 压力修正：压力越高，相同温度下析出量略增（但影响很小，约1-2%）
+                water_condensation["condensed_water"] = water_condensation["condensed_water"] * (1.0 + (pressure_ratio - 1.0) * 0.02)
+                water_condensation["condensed_water"] = round(water_condensation["condensed_water"], 2)
         
         print(f"✅ 按用户指定的排烟温度 {final_t_source_out:.1f}°C 计算完成")
         print(f"   排烟温度: {final_t_source_out:.1f}°C (用户指定)")

@@ -2,7 +2,7 @@
 import { Boiler } from './Boiler.js';
 import { HeatPump } from './HeatPump.js';
 import { TOPOLOGY, LIMITS, FUEL_DB, RECOVERY_TYPES, MODES, STRATEGIES } from '../core/constants.js';
-import { getSatTempFromPressure, estimateEnthalpy } from '../core/physics.js';
+import { getSatTempFromPressure, estimateEnthalpy, calculateAtmosphericPressure } from '../core/physics.js';
 import { calculateCOP } from '../core/cycles.js';
 
 export class System {
@@ -158,7 +158,9 @@ export class System {
         const s = this.state;
         const sourcePot = boiler.calculateSourcePotential();
         
-        let sysTargetT = (s.mode === MODES.STEAM) ? getSatTempFromPressure(s.targetTemp) : s.loadOut; 
+        const altitude = s.altitude || 0;
+        const atmPressure = calculateAtmosphericPressure(altitude);
+        let sysTargetT = (s.mode === MODES.STEAM) ? getSatTempFromPressure(s.targetTemp, atmPressure) : s.loadOut; 
         
         const h_target = estimateEnthalpy(sysTargetT, s.mode === MODES.STEAM);
         const h_in = estimateEnthalpy(s.loadIn, false);
@@ -330,7 +332,9 @@ export class System {
 
     runStandardSimulation(boiler, baseline, effectiveFuelPrice) {
         const s = this.state;
-        const targetT = (s.mode === MODES.STEAM) ? getSatTempFromPressure(s.targetTemp) : s.targetTemp;
+        const altitude = s.altitude || 0;
+        const atmPressure = calculateAtmosphericPressure(altitude);
+        const targetT = (s.mode === MODES.STEAM) ? getSatTempFromPressure(s.targetTemp, atmPressure) : s.targetTemp;
         
         let tSourceIn, tSourceOut, sourceType, tEvap;
 

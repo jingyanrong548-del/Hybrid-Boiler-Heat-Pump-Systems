@@ -250,6 +250,17 @@
                      <span class="absolute right-2 top-1 text-[10px] text-slate-400 pointer-events-none">ratio</span>
                    </div>
                 </div>
+                <div>
+                   <label class="block text-[10px] text-slate-400 mb-1">海拔高度 (Altitude)</label>
+                   <div class="relative">
+                     <input type="number" id="inp-altitude" value="0" step="10" min="0" max="5000"
+                      class="w-full pl-2 pr-12 py-1 text-xs border border-slate-300 rounded focus:ring-1 focus:ring-indigo-500 font-mono">
+                     <span class="absolute right-2 top-1 text-[10px] text-slate-400 pointer-events-none">m</span>
+                   </div>
+                   <div id="info-atmospheric-pressure" class="text-[9px] text-slate-400 mt-0.5 text-right font-mono">
+                     大气压: <span id="val-atmospheric-pressure">101.325</span> kPa
+                   </div>
+                </div>
             </div>
 
             <div class="flex items-center gap-2 pt-2 border-t border-slate-100">

@@ -136,7 +136,11 @@ const initialState = {
     
     // === 造价估算 ===
     capexHP: 2500,           // 热泵单位造价 (元/kW)
-    capexBase: 200           // 锅炉单位造价 (元/kW)
+    capexBase: 200,          // 锅炉单位造价 (元/kW)
+    
+    // === 环境参数 ===
+    altitude: 0,             // 海拔高度 (米, 默认海平面)
+    pefElec: 2.5             // 电网一次能源因子
 };
 
 class Store {
