@@ -56,3 +56,12 @@ def run_scheme_c(data: SchemeCRequest):
     solver = SchemeCSolver()
     result = solver.solve(data)
     return result
+
+# === 启动服务器 ===
+if __name__ == "__main__":
+    import uvicorn
+    print("🚀 启动后端服务器...")
+    print("📍 API 地址: http://localhost:8000")
+    print("📖 API 文档: http://localhost:8000/docs")
+    print("按 Ctrl+C 停止服务器\n")
+    uvicorn.run(app, host="0.0.0.0", port=8000, reload=True)
