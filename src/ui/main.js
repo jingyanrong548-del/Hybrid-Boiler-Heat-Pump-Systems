@@ -1298,7 +1298,7 @@ async function runSimulation() {
             const errorMsg = err.message || "";
             const errorName = err.name || "";
             
-            // 🔧 改进：识别连接错误
+            // 🔧 改进：识别连接错误，自动切换到 JS 本地计算模式
             if (errorName === 'ConnectionError' || 
                 errorMsg.includes("无法连接到") || 
                 errorMsg.includes("Failed to fetch") ||
@@ -1311,8 +1311,10 @@ async function runSimulation() {
                         log(line.trim(), 'error');
                     }
                 });
-                log(`💡 提示: 在本地开发时，请启动后端: cd ies_backend && python main.py`, 'warning');
-                ui.resCop.innerText = "Err";
+                log(`⚠️ 后端不可用，自动切换到 JS 本地计算模式`, 'warning');
+                log(`💡 提示: 如需精确计算，请启动后端: cd ies_backend && python main.py`, 'warning');
+                // 🔧 关键修复：连接失败时也使用本地 JS 计算，而不是直接返回错误
+                runLocalFallback("后端连接失败，使用 JS 本地估算模式");
                 return;
             }
             
