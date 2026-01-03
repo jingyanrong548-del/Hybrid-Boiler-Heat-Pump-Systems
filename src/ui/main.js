@@ -3,7 +3,7 @@ import '../style.css';
 import { store, getDefaultValuesA, getDefaultValuesB, getDefaultValuesC } from '../state/store.js';
 import { System } from '../models/System.js';
 import { Boiler } from '../models/Boiler.js'; // 用于计算烟气量
-import { fetchSchemeC } from '../core/api.js'; // 用于呼叫 Python
+// import { fetchSchemeC } from '../core/api.js'; // 已禁用后端调用，完全使用JS计算
 import { updatePerformanceChart } from './charts.js';
 import { renderSystemDiagram } from './diagram.js'; 
 import { MODES, TOPOLOGY, STRATEGIES, FUEL_DB, RECOVERY_TYPES } from '../core/constants.js';
@@ -1103,17 +1103,9 @@ async function runPythonSchemeC(state) {
     // 基准系统（纯粹锅炉）：提供总负荷的CO2排放
     const baselineCo2PerHour = baseline.co2PerHour;
     
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/8d595749-f587-4ed5-9402-4cdd0306ec71',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'main.js:843',message:'CO2计算开始',data:{baselineCo2PerHour,loadValue:state.loadValue,recoveredHeat},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-    // #endregion
-    
     // 耦合系统（锅炉+热泵）：直接计算实际CO2排放
     // 1. 计算锅炉实际需要提供的负荷
     const boilerLoadKW = state.loadValue - recoveredHeat;  // 锅炉实际负荷
-    
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/8d595749-f587-4ed5-9402-4cdd0306ec71',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'main.js:850',message:'锅炉负荷计算',data:{boilerLoadKW,loadValue:state.loadValue,recoveredHeat,boilerEff:state.boilerEff},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
-    // #endregion
     
     // 2. 计算锅炉实际CO2排放
     const boilerInputKW = boilerLoadKW / state.boilerEff;
@@ -1121,20 +1113,12 @@ async function runPythonSchemeC(state) {
     const boilerFuelUnits = boilerInputMJ / normalizedCalValue;
     const boilerCo2 = boilerFuelUnits * boiler.fuelData.co2Factor;  // 锅炉CO2 (kg/h)
     
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/8d595749-f587-4ed5-9402-4cdd0306ec71',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'main.js:857',message:'锅炉CO2计算',data:{boilerInputKW,boilerInputMJ,boilerFuelUnits,boilerCo2,normalizedCalValue,co2Factor:boiler.fuelData.co2Factor},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
-    // #endregion
-    
     // 3. 计算热泵驱动能耗产生的CO2
     let driveCo2 = 0, drivePrimary = 0;
     if (state.recoveryType === RECOVERY_TYPES.MVR) {
         // 电动热泵：驱动是电力
         driveCo2 = driveEnergy * FUEL_DB['ELECTRICITY'].co2Factor;  // kg/h
         drivePrimary = driveEnergy * (state.pefElec || 2.5);
-        
-        // #region agent log
-        fetch('http://127.0.0.1:7242/ingest/8d595749-f587-4ed5-9402-4cdd0306ec71',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'main.js:863',message:'电动热泵驱动CO2',data:{driveEnergy,driveCo2,elecCo2Factor:FUEL_DB['ELECTRICITY'].co2Factor,recoveryType:'MVR'},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
-        // #endregion
     } else {
         // 吸收式热泵：驱动是热（燃料）
         const driveInputFuelKW = driveEnergy / state.boilerEff;
@@ -1142,25 +1126,13 @@ async function runPythonSchemeC(state) {
         const driveFuelUnits = driveInputMJ / normalizedCalValue;
         driveCo2 = driveFuelUnits * boiler.fuelData.co2Factor;  // kg/h
         drivePrimary = driveInputFuelKW * 1.05;
-        
-        // #region agent log
-        fetch('http://127.0.0.1:7242/ingest/8d595749-f587-4ed5-9402-4cdd0306ec71',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'main.js:870',message:'吸收式热泵驱动CO2',data:{driveEnergy,driveInputFuelKW,driveInputMJ,driveFuelUnits,driveCo2,normalizedCalValue,co2Factor:boiler.fuelData.co2Factor,recoveryType:'ABSORPTION'},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
-        // #endregion
     }
     
     // 4. 耦合系统总CO2 = 锅炉CO2 + 热泵驱动CO2
     const currentCo2 = boilerCo2 + driveCo2;
     
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/8d595749-f587-4ed5-9402-4cdd0306ec71',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'main.js:876',message:'耦合系统CO2计算',data:{boilerCo2,driveCo2,currentCo2},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
-    // #endregion
-    
     // 5. 计算减排率 = (基准CO2 - 耦合CO2) / 基准CO2 * 100
     const co2Reduction = ((baselineCo2PerHour - currentCo2) / baselineCo2PerHour) * 100;
-    
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/8d595749-f587-4ed5-9402-4cdd0306ec71',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'main.js:880',message:'减排率计算',data:{baselineCo2PerHour,currentCo2,co2Reduction,formula:`(${baselineCo2PerHour}-${currentCo2})/${baselineCo2PerHour}*100`},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
-    // #endregion
     
     // 🔧 调试日志：输出CO2计算详情
     console.log("📊 CO2计算详情:", {
@@ -1274,7 +1246,7 @@ async function runPythonSchemeC(state) {
     log(`✅ Python 求解成功: 排烟 ${pyRes.required_source_out.toFixed(1)}°C`, 'eco');
 }
 
-// 5.2 [智能双模] 仿真主入口
+// 5.2 [纯JS计算] 仿真主入口
 async function runSimulation() {
     const state = store.getState();
     log(`🚀 仿真启动... [${state.topology}]`);
@@ -1282,55 +1254,21 @@ async function runSimulation() {
     if (ui.lblCop) ui.lblCop.innerText = "热泵机组 COP";
     ui.resCop.innerText = "..."; 
 
-    // 本地估算函数 (Fallback)
-    const runLocalFallback = (reason) => {
-        log(`⚠️ ${reason} -> 切换至 JS 估算模式`, 'warning');
+    // 直接使用JS计算，不依赖后端
+    try {
         const sys = new System(state);
         const res = sys.simulate();
-        res.limitReason = res.limitReason || { type: 'SOURCE', text: '🔥 Source Limited (热源不足)' };
-        handleSimulationResult(res, state);
-    };
-
-    if (state.topology === TOPOLOGY.RECOVERY) {
-        try {
-            await runPythonSchemeC(state);
-        } catch (err) {
-            const errorMsg = err.message || "";
-            const errorName = err.name || "";
-            
-            // 🔧 改进：识别连接错误，自动切换到 JS 本地计算模式
-            if (errorName === 'ConnectionError' || 
-                errorMsg.includes("无法连接到") || 
-                errorMsg.includes("Failed to fetch") ||
-                errorMsg.includes("Load failed") ||
-                errorMsg.includes("network")) {
-                // 将多行错误消息拆分为多行日志
-                const errorLines = errorMsg.split('\n');
-                errorLines.forEach(line => {
-                    if (line.trim()) {
-                        log(line.trim(), 'error');
-                    }
-                });
-                log(`⚠️ 后端不可用，自动切换到 JS 本地计算模式`, 'warning');
-                log(`💡 提示: 如需精确计算，请启动后端: cd ies_backend && python main.py`, 'warning');
-                // 🔧 关键修复：连接失败时也使用本地 JS 计算，而不是直接返回错误
-                runLocalFallback("后端连接失败，使用 JS 本地估算模式");
-                return;
-            }
-            
-            // 智能降级: 如果是热源不足导致的无法收敛，切回 JS 模式
-            if (errorMsg.includes("无法收敛") || errorMsg.includes("热源不足")) {
-                runLocalFallback("热源不足以支撑全额预热目标");
-            } else {
-                log(`❌ 系统错误: ${errorMsg}`, 'error');
-                ui.resCop.innerText = "Err";
-            }
+        
+        // 确保有limitReason
+        if (!res.limitReason) {
+            res.limitReason = { type: 'SOURCE', text: '🔥 Source Limited (热源不足)' };
         }
-    } else {
-        // 标准模式直接用 JS
-        const sys = new System(state);
-        const res = sys.simulate();
+        
         handleSimulationResult(res, state);
+    } catch (err) {
+        const errorMsg = err.message || "未知错误";
+        log(`❌ 计算错误: ${errorMsg}`, 'error');
+        ui.resCop.innerText = "Err";
     }
 }
 

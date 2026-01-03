@@ -13,106 +13,21 @@ const API_BASE = isDevelopment
     ? "http://localhost:8000"  // 开发环境：本地后端
     : "/api";  // 生产环境：使用 Vercel API 路由（相对路径）
 
-// 在控制台输出当前使用的 API 地址（方便调试）
-if (isDevelopment) {
-    console.log("🔧 开发模式：使用本地后端", API_BASE);
-} else {
-    console.log("🌐 生产模式：使用 Vercel API", API_BASE);
-}
+// 后端API调用已禁用，完全使用前端JS计算
+// 注释掉控制台输出，避免不必要的日志
+// if (isDevelopment) {
+//     console.log("🔧 开发模式：使用本地后端", API_BASE);
+// } else {
+//     console.log("🌐 生产模式：使用 Vercel API", API_BASE);
+// }
 
 /**
  * 呼叫 Python 后端执行 Scheme C (逆向平衡)
  * 支持自动回退：如果本地后端不可用，尝试使用相对路径 API
  */
+// 后端API调用已禁用，完全使用前端JS计算
+// 此函数保留用于向后兼容，但不再实际调用后端
 export async function fetchSchemeC(payload) {
-    const primaryUrl = `${API_BASE}/calculate/scheme-c`;
-    const fallbackUrl = `/api/calculate/scheme-c`;
-    
-    // 尝试主 API（开发环境：localhost:8000，生产环境：/api）
-    try {
-        console.log("📡 正在呼叫 Python 后端...", payload);
-        console.log("📍 API 地址:", primaryUrl);
-        
-        const response = await fetch(primaryUrl, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload),
-            // 添加超时控制（10秒）
-            signal: AbortSignal.timeout(10000)
-        });
-
-        if (!response.ok) {
-            const errText = await response.text();
-            throw new Error(`Server Error: ${errText}`);
-        }
-
-        const data = await response.json();
-        console.log("📥 后端返回数据:", data);
-        return data;
-    } catch (error) {
-        // 🔧 自动回退机制：如果是开发环境且本地后端不可用，尝试使用相对路径
-        if (isDevelopment && API_BASE === "http://localhost:8000" && 
-            (error.name === 'AbortError' || 
-             error.message.includes('Failed to fetch') || 
-             error.message.includes('Load failed') ||
-             error.message.includes('network') ||
-             error.message.includes('CORS'))) {
-            
-            console.warn("⚠️ 本地后端不可用，尝试使用相对路径 API...");
-            console.log("📍 回退 API 地址:", fallbackUrl);
-            
-            try {
-                const fallbackResponse = await fetch(fallbackUrl, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify(payload),
-                    signal: AbortSignal.timeout(10000)
-                });
-
-                if (!fallbackResponse.ok) {
-                    const errText = await fallbackResponse.text();
-                    // 保存响应状态码以便后续错误处理
-                    const error = new Error(`Server Error: ${errText}`);
-                    error.response = { status: fallbackResponse.status };
-                    throw error;
-                }
-
-                const data = await fallbackResponse.json();
-                console.log("✅ 回退 API 成功，返回数据:", data);
-                return data;
-            } catch (fallbackError) {
-                // 回退也失败，提供详细错误信息
-                const is404 = fallbackError.message.includes('404') || 
-                             (fallbackError.response && fallbackError.response.status === 404);
-                
-                let errorMessage = `无法连接到后端服务器。\n\n`;
-                errorMessage += `尝试的连接：\n`;
-                errorMessage += `1. ${primaryUrl} - 失败（本地后端未运行）\n`;
-                
-                if (is404) {
-                    errorMessage += `2. ${fallbackUrl} - 失败（404，该路径仅在 Vercel 部署环境中可用）\n\n`;
-                    errorMessage += `💡 解决方案：\n`;
-                    errorMessage += `在本地开发环境中，请启动本地后端服务器：\n`;
-                    errorMessage += `  cd ies_backend\n`;
-                    errorMessage += `  python main.py\n\n`;
-                    errorMessage += `或者访问已部署的生产环境版本：\n`;
-                    errorMessage += `  https://your-app.vercel.app`;
-                } else {
-                    errorMessage += `2. ${fallbackUrl} - 失败\n\n`;
-                    errorMessage += `请确保：\n`;
-                    errorMessage += `- 本地后端正在运行: cd ies_backend && python main.py\n`;
-                    errorMessage += `- 或者使用已部署的生产环境版本`;
-                }
-                
-                const friendlyError = new Error(errorMessage);
-                friendlyError.name = 'ConnectionError';
-                console.error("❌ API 通信失败（所有尝试均失败）:", friendlyError);
-                throw friendlyError;
-            }
-        }
-        
-        // 非开发环境或其他错误，直接抛出
-        console.error("❌ API 通信失败:", error);
-        throw error;
-    }
+    // 不再调用后端，直接抛出错误提示使用JS计算
+    throw new Error("后端API调用已禁用，请使用前端JS计算模式");
 }
